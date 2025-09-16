@@ -8,18 +8,40 @@ const generateUniqueId = () =>
 // OTP generator
 const generateOtp = () => Math.floor(1000 + Math.random() * 9000).toString();
 
+// Type definitions
+type Contractor = {
+  id: number;
+  name: string;
+  mobile: string;
+  company: string;
+};
+
+type JobStatus = "pending" | "otp_sent" | "verified" | "completed";
+
+type Job = {
+  id: string;
+  title: string;
+  location: string;
+  status: JobStatus;
+  postedAt: number;
+  contractorId?: number;
+  otp?: string | null;
+  workerId?: string | null;
+  rating?: number | null;
+};
+
 export default function ContractorDashboard() {
-  const [title, setTitle] = useState("");
-  const [location, setLocation] = useState("");
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [contractor, setContractor] = useState<any>(null);
+  const [title, setTitle] = useState<string>("");
+  const [location, setLocation] = useState<string>("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [contractor, setContractor] = useState<Contractor | null>(null);
 
   useEffect(() => {
     const savedContractor = localStorage.getItem("contractor_profile");
     if (savedContractor) {
-      setContractor(JSON.parse(savedContractor));
+      setContractor(JSON.parse(savedContractor) as Contractor);
     } else {
-      const demoContractor = {
+      const demoContractor: Contractor = {
         id: 1,
         name: "विजय कुमार",
         mobile: "9876501234",
@@ -30,10 +52,10 @@ export default function ContractorDashboard() {
     }
 
     const savedJobs = localStorage.getItem("jobs");
-    if (savedJobs) setJobs(JSON.parse(savedJobs));
+    if (savedJobs) setJobs(JSON.parse(savedJobs) as Job[]);
   }, []);
 
-  const saveJobs = (updated: any[]) => {
+  const saveJobs = (updated: Job[]) => {
     setJobs(updated);
     localStorage.setItem("jobs", JSON.stringify(updated));
   };
@@ -44,7 +66,7 @@ export default function ContractorDashboard() {
       return;
     }
 
-    const newJob = {
+    const newJob: Job = {
       id: generateUniqueId(),
       title: title.trim(),
       location: location.trim(),
@@ -64,12 +86,11 @@ export default function ContractorDashboard() {
     alert("✅ काम सफलतापूर्वक पोस्ट हो गया");
   };
 
-  // ✅ Assign worker + OTP
   const assignWorker = (jobId: string) => {
     const otp = generateOtp();
     const updated = jobs.map((job) =>
       job.id === jobId
-        ? { ...job, otp, status: "otp_sent" }
+        ? { ...job, otp, status: "otp_sent" as JobStatus }
         : job
     );
     saveJobs(updated);
@@ -78,14 +99,13 @@ export default function ContractorDashboard() {
     alert(`🔐 OTP भेज दिया गया है: ${otp} (Worker को देना है)`);
   };
 
-  // ✅ Give rating
   const giveRating = (jobId: string, rating: number) => {
     const updated = jobs.map((job) =>
-      job.id === jobId ? { ...job, rating, status: "completed" } : job
+      job.id === jobId ? { ...job, rating, status: "completed" as JobStatus } : job
     );
     saveJobs(updated);
 
-    const workerRatings = JSON.parse(localStorage.getItem("worker_ratings") || "[]");
+    const workerRatings = JSON.parse(localStorage.getItem("worker_ratings") || "[]") as number[];
     workerRatings.push(rating);
     localStorage.setItem("worker_ratings", JSON.stringify(workerRatings));
 

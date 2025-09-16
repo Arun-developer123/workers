@@ -1,21 +1,47 @@
 "use client";
 import { useState, useEffect } from "react";
 
+// Unique ID generator
 const generateUniqueId = () =>
   `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
+// Type definitions
+type Worker = {
+  id: string;
+  name: string;
+  mobile: string;
+  skills: string[];
+};
+
+type JobStatus = "pending" | "otp_pending" | "otp_sent" | "verified" | "completed";
+
+type Job = {
+  id: string;
+  title: string;
+  location: string;
+  status: JobStatus;
+  postedAt?: number;
+  contractorId?: number;
+  contractorMobile?: string;
+  otp?: string | null;
+  workerId?: string | null;
+  uniqueId?: string;
+  rating?: number | null;
+  acceptedAt?: number;
+};
+
 export default function WorkerDashboard() {
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [myJobs, setMyJobs] = useState<any[]>([]);
-  const [worker, setWorker] = useState<any>(null);
-  const [otpInput, setOtpInput] = useState("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [myJobs, setMyJobs] = useState<Job[]>([]);
+  const [worker, setWorker] = useState<Worker | null>(null);
+  const [otpInput, setOtpInput] = useState<string>("");
 
   useEffect(() => {
     const savedWorker = localStorage.getItem("worker_profile");
     if (savedWorker) {
-      setWorker(JSON.parse(savedWorker));
+      setWorker(JSON.parse(savedWorker) as Worker);
     } else {
-      const demoWorker = {
+      const demoWorker: Worker = {
         id: "demo-1",
         name: "रामेश्वर",
         mobile: "9876543210",
@@ -26,40 +52,41 @@ export default function WorkerDashboard() {
     }
 
     const savedJobs = localStorage.getItem("jobs");
-    if (savedJobs) setJobs(JSON.parse(savedJobs));
+    if (savedJobs) setJobs(JSON.parse(savedJobs) as Job[]);
 
     const savedMyJobs = localStorage.getItem("my_jobs");
-    if (savedMyJobs) setMyJobs(JSON.parse(savedMyJobs));
+    if (savedMyJobs) setMyJobs(JSON.parse(savedMyJobs) as Job[]);
   }, []);
 
-  const acceptJob = (job: any) => {
-    const jobWithStatus = {
+  const acceptJob = (job: Job) => {
+    if (!worker) return;
+
+    const jobWithStatus: Job = {
       ...job,
-      status: "otp_pending",
+      status: "otp_pending", // ✅ Correct JobStatus type
       acceptedAt: Date.now(),
       uniqueId: generateUniqueId(),
-      workerId: worker?.id,
+      workerId: worker.id,
     };
 
-    const updatedMyJobs = [...myJobs, jobWithStatus];
-    setMyJobs(updatedMyJobs);
-    localStorage.setItem("my_jobs", JSON.stringify(updatedMyJobs));
+    setMyJobs((prev) => [...prev, jobWithStatus]);
+    localStorage.setItem("my_jobs", JSON.stringify([...myJobs, jobWithStatus]));
 
     alert("✅ आपने काम स्वीकार कर लिया (OTP का इंतज़ार करें)");
   };
 
   const verifyOtp = (jobId: string) => {
-    const pendingOtp = JSON.parse(localStorage.getItem("pending_otp") || "{}");
+    const pendingOtp = JSON.parse(localStorage.getItem("pending_otp") || "{}") as { jobId?: string; otp?: string };
     if (pendingOtp.jobId === jobId && pendingOtp.otp === otpInput) {
       const updated = myJobs.map((job) =>
-        job.id === jobId ? { ...job, status: "verified" } : job
+        job.uniqueId === jobId ? { ...job, status: "verified" as JobStatus } : job
       );
       setMyJobs(updated);
       localStorage.setItem("my_jobs", JSON.stringify(updated));
 
-      const allJobs = JSON.parse(localStorage.getItem("jobs") || "[]");
-      const updatedJobs = allJobs.map((job: any) =>
-        job.id === jobId ? { ...job, status: "verified" } : job
+      const allJobs = JSON.parse(localStorage.getItem("jobs") || "[]") as Job[];
+      const updatedJobs = allJobs.map((job) =>
+        job.id === jobId ? { ...job, status: "verified" as JobStatus } : job
       );
       localStorage.setItem("jobs", JSON.stringify(updatedJobs));
 
@@ -71,10 +98,10 @@ export default function WorkerDashboard() {
     }
   };
 
-  const ratings = JSON.parse(localStorage.getItem("worker_ratings") || "[]");
+  const ratings = JSON.parse(localStorage.getItem("worker_ratings") || "[]") as number[];
   const avgRating =
     ratings.length > 0
-      ? (ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length).toFixed(1)
+      ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1)
       : "N/A";
 
   return (
@@ -163,7 +190,7 @@ export default function WorkerDashboard() {
                       className="border p-2 rounded-lg flex-1"
                     />
                     <button
-                      onClick={() => verifyOtp(job.id)}
+                      onClick={() => verifyOtp(job.uniqueId || job.id)}
                       className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg transition"
                     >
                       ✅ Verify

@@ -36,7 +36,10 @@ export default function WorkerDashboard() {
   const [worker, setWorker] = useState<Worker | null>(null);
   const [otpInput, setOtpInput] = useState<string>("");
 
+  // ✅ localStorage ko useEffect ke andar hi access kar rahe hain
   useEffect(() => {
+    if (typeof window === "undefined") return; // SSR me skip
+
     const savedWorker = localStorage.getItem("worker_profile");
     if (savedWorker) {
       setWorker(JSON.parse(savedWorker) as Worker);
@@ -63,19 +66,26 @@ export default function WorkerDashboard() {
 
     const jobWithStatus: Job = {
       ...job,
-      status: "otp_pending", // ✅ Correct JobStatus type
+      status: "otp_pending",
       acceptedAt: Date.now(),
       uniqueId: generateUniqueId(),
       workerId: worker.id,
     };
 
-    setMyJobs((prev) => [...prev, jobWithStatus]);
-    localStorage.setItem("my_jobs", JSON.stringify([...myJobs, jobWithStatus]));
+    setMyJobs((prev) => {
+      const updated = [...prev, jobWithStatus];
+      if (typeof window !== "undefined") {
+        localStorage.setItem("my_jobs", JSON.stringify(updated));
+      }
+      return updated;
+    });
 
     alert("✅ आपने काम स्वीकार कर लिया (OTP का इंतज़ार करें)");
   };
 
   const verifyOtp = (jobId: string) => {
+    if (typeof window === "undefined") return; // SSR me skip
+
     const pendingOtp = JSON.parse(localStorage.getItem("pending_otp") || "{}") as { jobId?: string; otp?: string };
     if (pendingOtp.jobId === jobId && pendingOtp.otp === otpInput) {
       const updated = myJobs.map((job) =>
@@ -98,7 +108,10 @@ export default function WorkerDashboard() {
     }
   };
 
-  const ratings = JSON.parse(localStorage.getItem("worker_ratings") || "[]") as number[];
+  const ratings =
+    typeof window !== "undefined"
+      ? (JSON.parse(localStorage.getItem("worker_ratings") || "[]") as number[])
+      : [];
   const avgRating =
     ratings.length > 0
       ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1)

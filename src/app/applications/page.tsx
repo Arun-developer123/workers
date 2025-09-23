@@ -42,7 +42,6 @@ type ActiveShifts = {
   [applicationId: string]: ShiftLog | null;
 };
 
-// ✅ Define a safe type for raw Supabase result
 type RawApplicationFromSupabase = Omit<Application, "jobs"> & { jobs: Job[] };
 
 export default function MyApplicationsPage() {
@@ -53,6 +52,7 @@ export default function MyApplicationsPage() {
 
   useEffect(() => {
     const fetchApplications = async () => {
+      // Client-side only: localStorage check
       const storedProfile = localStorage.getItem("fake_user_profile");
       if (!storedProfile) {
         router.push("/auth/sign-in");
@@ -67,54 +67,55 @@ export default function MyApplicationsPage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("applications")
-        .select(`
-          id,
-          status,
-          created_at,
-          contractor_id,
-          job_id,
-          jobs(title, location, wage, description)
-        `)
-        .eq("worker_id", profile.user_id)
-        .order("created_at", { ascending: false });
+      // Fetch applications
+      try {
+        const { data, error } = await supabase
+          .from("applications")
+          .select(`
+            id,
+            status,
+            created_at,
+            contractor_id,
+            job_id,
+            jobs(title, location, wage, description)
+          `)
+          .eq("worker_id", profile.user_id)
+          .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("❌ Applications fetch error:", error);
-        alert("Applications fetch में समस्या हुई");
-        setLoading(false);
-        return;
-      }
+        if (error) throw error;
 
-      // ✅ Use typed result (no `any`)
-      const rawApplications = (data || []) as RawApplicationFromSupabase[];
+        const rawApplications = (data || []) as RawApplicationFromSupabase[];
 
-      const parsedApplications: Application[] = rawApplications.map((app) => ({
-        ...app,
-        jobs: Array.isArray(app.jobs) ? app.jobs[0] : app.jobs, // Ensure jobs is a single Job
-      }));
+        const parsedApplications: Application[] = rawApplications.map((app) => ({
+          ...app,
+          jobs: Array.isArray(app.jobs) ? app.jobs[0] : app.jobs,
+        }));
 
-      const contractorIds = Array.from(
-        new Set(parsedApplications.map((app) => app.contractor_id))
-      );
-
-      const { data: contractorsData } = await supabase
-        .from("profiles")
-        .select("user_id, phone")
-        .in("user_id", contractorIds);
-
-      const contractors = (contractorsData || []) as Contractor[];
-
-      const enrichedApps = parsedApplications.map((app) => {
-        const contractor = contractors.find(
-          (c) => c.user_id === app.contractor_id
+        const contractorIds = Array.from(
+          new Set(parsedApplications.map((app) => app.contractor_id))
         );
-        return { ...app, contractorPhone: contractor?.phone || null };
-      });
 
-      setApplications(enrichedApps);
-      setLoading(false);
+        const { data: contractorsData } = await supabase
+          .from("profiles")
+          .select("user_id, phone")
+          .in("user_id", contractorIds);
+
+        const contractors = (contractorsData || []) as Contractor[];
+
+        const enrichedApps = parsedApplications.map((app) => {
+          const contractor = contractors.find(
+            (c) => c.user_id === app.contractor_id
+          );
+          return { ...app, contractorPhone: contractor?.phone || null };
+        });
+
+        setApplications(enrichedApps);
+      } catch (err) {
+        console.error("❌ Applications fetch error:", err);
+        alert("Applications fetch में समस्या हुई");
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchApplications();
@@ -173,7 +174,6 @@ export default function MyApplicationsPage() {
 
   const emergencyAlert = (app: Application) => {
     alert("🚨 आपातकालीन अलर्ट भेजा गया (Contractor को सूचित करें)");
-    // Future: insert into alerts table
   };
 
   if (loading) return <p className="p-6">लोड हो रहा है...</p>;

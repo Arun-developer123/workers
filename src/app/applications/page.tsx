@@ -42,6 +42,9 @@ type ActiveShifts = {
   [applicationId: string]: ShiftLog | null;
 };
 
+// ✅ Define a safe type for raw Supabase result
+type RawApplicationFromSupabase = Omit<Application, "jobs"> & { jobs: Job[] };
+
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +58,7 @@ export default function MyApplicationsPage() {
         router.push("/auth/sign-in");
         return;
       }
+
       const profile = JSON.parse(storedProfile);
 
       if (profile.role !== "worker") {
@@ -83,8 +87,8 @@ export default function MyApplicationsPage() {
         return;
       }
 
-      // Fix: map raw Supabase data to Application[]
-      const rawApplications = (data || []) as any[];
+      // ✅ Use typed result (no `any`)
+      const rawApplications = (data || []) as RawApplicationFromSupabase[];
 
       const parsedApplications: Application[] = rawApplications.map((app) => ({
         ...app,

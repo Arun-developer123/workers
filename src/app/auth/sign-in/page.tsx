@@ -45,8 +45,12 @@ export default function SignInPage() {
 
       // Redirect to home
       router.push("/home");
-    } catch (err: any) {
-      alert("Error: " + err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        alert("Error: " + err.message);
+      } else {
+        alert("An unknown error occurred");
+      }
     }
   };
 

@@ -49,7 +49,7 @@ export default function SignUpPage() {
           user_id: userId,
           role: "worker",
           name: name || null,
-          phone: phone, // save the mobile number
+          phone: phone,
           skill: null,
           wage: null,
           location: null,
@@ -61,8 +61,12 @@ export default function SignUpPage() {
 
       alert("✅ खाता और profile बन गया");
       router.push("/profile/setup");
-    } catch (err: any) {
-      alert("Error: " + err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        alert("Error: " + err.message);
+      } else {
+        alert("An unknown error occurred");
+      }
     }
   };
 

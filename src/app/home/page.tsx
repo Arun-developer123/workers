@@ -5,10 +5,51 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
 
+// ==== Types ====
+interface Profile {
+  user_id: string;
+  name: string;
+  role: "worker" | "contractor";
+  phone?: string;
+}
+
+interface Job {
+  id: string;
+  title: string;
+  location: string;
+  wage: number;
+  contractor_id: string;
+  created_at?: string;
+}
+
+interface Application {
+  id: string;
+  worker_id: string;
+  contractor_id: string;
+  job_id: string;
+  status: "pending" | "accepted" | "rejected";
+  jobs?: Job[]; // ✅ FIX: array instead of object
+  shiftstatus?: string | null;
+}
+
+interface ShiftLog {
+  worker_id: string;
+  contractor_id: string;
+  job_id: string;
+  status: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+interface WorkerProfile {
+  user_id: string;
+  phone: string;
+}
+
 export default function HomePage() {
-  const [profile, setProfile] = useState<any>(null);
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [applications, setApplications] = useState<any[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
   const [workersMap, setWorkersMap] = useState<{ [key: string]: string }>({});
   const [wallet, setWallet] = useState<number>(0);
   const [ratingsGiven, setRatingsGiven] = useState<{ [key: string]: boolean }>({});
@@ -21,7 +62,7 @@ export default function HomePage() {
       router.push("/auth/sign-in");
       return;
     }
-    const parsedProfile = JSON.parse(storedProfile);
+    const parsedProfile: Profile = JSON.parse(storedProfile);
     setProfile(parsedProfile);
 
     if (parsedProfile.role === "worker") {
@@ -36,14 +77,14 @@ export default function HomePage() {
   // Worker → Available Jobs
   const fetchJobs = async () => {
     const { data } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
-    setJobs(data || []);
+    setJobs((data as Job[]) || []);
   };
 
   // Contractor → Applications + join shift_logs
   const fetchContractorData = async (userId: string) => {
     const { data: apps } = await supabase
       .from("applications")
-      .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage)")
+      .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage, contractor_id)")
       .eq("contractor_id", userId)
       .order("created_at", { ascending: false });
 
@@ -52,28 +93,30 @@ export default function HomePage() {
       return;
     }
 
+    const applicationsData = apps as Application[];
+
     // Worker phones
-    const workerIds = Array.from(new Set(apps.map((a: any) => a.worker_id)));
+    const workerIds = Array.from(new Set(applicationsData.map((a) => a.worker_id)));
     const { data: workersData } = await supabase
       .from("profiles")
       .select("user_id, phone")
       .in("user_id", workerIds);
 
     const map: { [key: string]: string } = {};
-    (workersData || []).forEach((w: any) => {
+    ((workersData as WorkerProfile[]) || []).forEach((w) => {
       map[w.user_id] = w.phone;
     });
     setWorkersMap(map);
 
-    // Fetch shift_logs for these applications
+    // Fetch shift_logs
     const { data: shifts } = await supabase
       .from("shift_logs")
       .select("worker_id, contractor_id, job_id, status")
-      .in("job_id", apps.map((a: any) => a.job_id));
+      .in("job_id", applicationsData.map((a) => a.job_id));
 
-    const merged = apps.map((a: any) => {
-      const shift = shifts?.find(
-        (s: any) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
+    const merged = applicationsData.map((a) => {
+      const shift = (shifts as ShiftLog[] | null)?.find(
+        (s) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
       );
       return { ...a, shiftstatus: shift?.status || null };
     });
@@ -83,9 +126,10 @@ export default function HomePage() {
 
   // Worker → Apply Job
   const applyJob = async (jobId: string) => {
+    const contractorId = jobs.find((j) => j.id === jobId)?.contractor_id;
     const { error } = await supabase.from("applications").insert({
-      worker_id: profile.user_id,
-      contractor_id: jobs.find((j) => j.id === jobId)?.contractor_id,
+      worker_id: profile?.user_id,
+      contractor_id: contractorId,
       job_id: jobId,
       status: "pending",
     });
@@ -106,7 +150,7 @@ export default function HomePage() {
   };
 
   // Worker → Start Shift
-  const startShift = async (app: any) => {
+  const startShift = async (app: Application) => {
     const { error } = await supabase.from("shift_logs").insert({
       worker_id: app.worker_id,
       contractor_id: app.contractor_id,
@@ -119,11 +163,11 @@ export default function HomePage() {
       return;
     }
     alert("✅ शिफ्ट शुरू हो गई");
-    fetchContractorData(app.contractor_id); // refresh contractor view
+    fetchContractorData(app.contractor_id);
   };
 
   // Worker → End Shift
-  const endShift = async (app: any) => {
+  const endShift = async (app: Application) => {
     const { error } = await supabase
       .from("shift_logs")
       .update({
@@ -142,9 +186,9 @@ export default function HomePage() {
     fetchContractorData(app.contractor_id);
   };
 
-  // Contractor → Pay Worker (Wallet update via RPC)
-  const payWorker = async (app: any) => {
-    const wage = Number(app.jobs?.wage || 0);
+  // Contractor → Pay Worker
+  const payWorker = async (app: Application) => {
+    const wage = Number(app.jobs?.[0]?.wage || 0); // ✅ FIX
     if (!wage) {
       alert("❌ Wage सेट नहीं है");
       return;
@@ -155,17 +199,17 @@ export default function HomePage() {
       return;
     }
     alert(`✅ Worker को ₹${wage} का भुगतान कर दिया गया`);
-    fetchWallet(app.worker_id); // worker का balance update check
+    fetchWallet(app.worker_id);
   };
 
   // Contractor → Rate Worker
-  const rateWorker = async (app: any) => {
+  const rateWorker = async (app: Application) => {
     const rating = prompt("⭐ Worker को रेट करें (1-5):");
     const review = prompt("✍ Review लिखें (optional):");
     if (!rating) return;
 
     const { error } = await supabase.from("ratings").insert({
-      rater_id: profile.user_id,
+      rater_id: profile?.user_id,
       rated_id: app.worker_id,
       job_id: app.job_id,
       rating: Number(rating),
@@ -185,7 +229,7 @@ export default function HomePage() {
       alert("❌ वॉलेट खाली है");
       return;
     }
-    const { error } = await supabase.rpc("withdraw_wallet", { worker_id: profile.user_id });
+    const { error } = await supabase.rpc("withdraw_wallet", { worker_id: profile?.user_id });
     if (error) {
       alert("❌ सैलरी निकालने में समस्या");
       return;
@@ -196,7 +240,7 @@ export default function HomePage() {
 
   const fetchWallet = async (userId: string) => {
     const { data } = await supabase.from("wallets").select("balance").eq("user_id", userId).single();
-    setWallet(data?.balance || 0);
+    setWallet((data?.balance as number) || 0);
   };
 
   const fetchMyRating = async (userId: string) => {
@@ -205,7 +249,7 @@ export default function HomePage() {
       setMyRating(null);
       return;
     }
-    const avg = data.reduce((sum: number, r: any) => sum + r.rating, 0) / data.length;
+    const avg = (data as { rating: number }[]).reduce((sum, r) => sum + r.rating, 0) / data.length;
     setMyRating(Number(avg.toFixed(1)));
   };
 
@@ -273,7 +317,7 @@ export default function HomePage() {
                 return (
                   <div key={app.id} className="border rounded-lg p-4 shadow flex flex-col gap-2">
                     <p className="text-lg font-bold">
-                      {app.jobs?.title} ({app.jobs?.location})
+                      {app.jobs?.[0]?.title} ({app.jobs?.[0]?.location})
                     </p>
                     <p>स्थिति: {app.status}</p>
                     <p>शिफ्ट स्थिति: {app.shiftstatus || "—"}</p>
@@ -323,7 +367,7 @@ export default function HomePage() {
                           onClick={() => payWorker(app)}
                           className="bg-purple-600 text-white py-2 rounded-lg"
                         >
-                          भुगतान करें 💰 (₹{app.jobs?.wage})
+                          भुगतान करें 💰 (₹{app.jobs?.[0]?.wage})
                         </button>
                         {!ratingsGiven[app.id] && (
                           <button

@@ -5,10 +5,38 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import AudioButton from "@/components/AudioButton";
 
+// ✅ Type Definitions
+interface Job {
+  title: string;
+  location: string;
+  wage: number;
+  description: string;
+}
+
+interface Application {
+  id: string;
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+  contractor_id: string;
+  job_id: string;
+  jobs?: Job;
+  contractorPhone?: string | null;
+}
+
+interface ShiftLog {
+  id: string;
+  worker_id: string;
+  contractor_id: string;
+  job_id: string;
+  start_time: string;
+  end_time?: string;
+  status: "ongoing" | "completed";
+}
+
 export default function MyApplicationsPage() {
-  const [applications, setApplications] = useState<any[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeShift, setActiveShift] = useState<{ [key: string]: any }>({});
+  const [activeShift, setActiveShift] = useState<Record<string, ShiftLog | null>>({});
   const router = useRouter();
 
   useEffect(() => {
@@ -27,7 +55,7 @@ export default function MyApplicationsPage() {
       }
 
       const { data, error } = await supabase
-        .from("applications")
+        .from<Application>("applications")
         .select(`
           id,
           status,
@@ -46,15 +74,15 @@ export default function MyApplicationsPage() {
         return;
       }
 
-      const contractorIds = Array.from(new Set((data || []).map((app: any) => app.contractor_id)));
+      const contractorIds = Array.from(new Set((data || []).map((app) => app.contractor_id)));
       const { data: contractorsData } = await supabase
-        .from("profiles")
+        .from<{ user_id: string; phone: string }>("profiles")
         .select("user_id, phone")
         .in("user_id", contractorIds);
 
       const contractors = contractorsData || [];
-      const enrichedApps = (data || []).map((app: any) => {
-        const contractor = contractors.find((c: any) => c.user_id === app.contractor_id);
+      const enrichedApps: Application[] = (data || []).map((app) => {
+        const contractor = contractors.find((c) => c.user_id === app.contractor_id);
         return { ...app, contractorPhone: contractor?.phone || null };
       });
 
@@ -66,10 +94,11 @@ export default function MyApplicationsPage() {
   }, [router]);
 
   // ✅ Start Shift → insert row in shift_logs
-  const startShift = async (app: any) => {
+  const startShift = async (app: Application) => {
     const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
+
     const { data, error } = await supabase
-      .from("shift_logs")
+      .from<ShiftLog>("shift_logs")
       .insert({
         worker_id: storedProfile.user_id,
         contractor_id: app.contractor_id,
@@ -90,7 +119,7 @@ export default function MyApplicationsPage() {
   };
 
   // ✅ End Shift → update row in shift_logs
-  const endShift = async (app: any) => {
+  const endShift = async (app: Application) => {
     const shift = activeShift[app.id];
     if (!shift) {
       alert("❌ कोई ongoing शिफ्ट नहीं मिली");
@@ -98,7 +127,7 @@ export default function MyApplicationsPage() {
     }
 
     const { error } = await supabase
-      .from("shift_logs")
+      .from<ShiftLog>("shift_logs")
       .update({
         end_time: new Date().toISOString(),
         status: "completed",
@@ -115,9 +144,8 @@ export default function MyApplicationsPage() {
   };
 
   // ✅ Emergency Button
-  const emergencyAlert = (app: any) => {
+  const emergencyAlert = (app: Application) => {
     alert("🚨 आपातकालीन अलर्ट भेजा गया (Contractor को सूचित करें)");
-    // Future: insert into alerts table
   };
 
   if (loading) return <p className="p-6">लोड हो रहा है...</p>;
@@ -150,7 +178,6 @@ export default function MyApplicationsPage() {
                   {app.status === "rejected" && "❌ अस्वीकृत"}
                 </p>
 
-                {/* ✅ Accepted application → show Call & Chat + Shift Controls */}
                 {app.status === "accepted" && app.contractorPhone && (
                   <div className="flex flex-col gap-2 mt-2">
                     <div className="flex gap-2">
@@ -170,7 +197,6 @@ export default function MyApplicationsPage() {
                       </a>
                     </div>
 
-                    {/* Shift buttons */}
                     {!shift ? (
                       <button
                         onClick={() => startShift(app)}

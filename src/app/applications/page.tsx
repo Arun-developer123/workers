@@ -5,25 +5,30 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import AudioButton from "@/components/AudioButton";
 
-// ✅ Type Definitions
-interface Job {
+// --- Type Definitions ---
+type Job = {
   title: string;
   location: string;
   wage: number;
   description: string;
-}
+};
 
-interface Application {
+type Application = {
   id: string;
   status: "pending" | "accepted" | "rejected";
   created_at: string;
   contractor_id: string;
   job_id: string;
-  jobs?: Job;
+  jobs: Job;
   contractorPhone?: string | null;
-}
+};
 
-interface ShiftLog {
+type Contractor = {
+  user_id: string;
+  phone: string;
+};
+
+type ShiftLog = {
   id: string;
   worker_id: string;
   contractor_id: string;
@@ -31,12 +36,16 @@ interface ShiftLog {
   start_time: string;
   end_time?: string;
   status: "ongoing" | "completed";
-}
+};
+
+type ActiveShifts = {
+  [applicationId: string]: ShiftLog | null;
+};
 
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeShift, setActiveShift] = useState<Record<string, ShiftLog | null>>({});
+  const [activeShift, setActiveShift] = useState<ActiveShifts>({});
   const router = useRouter();
 
   useEffect(() => {
@@ -55,7 +64,7 @@ export default function MyApplicationsPage() {
       }
 
       const { data, error } = await supabase
-        .from<Application>("applications")
+        .from("applications")
         .select(`
           id,
           status,
@@ -74,15 +83,29 @@ export default function MyApplicationsPage() {
         return;
       }
 
-      const contractorIds = Array.from(new Set((data || []).map((app) => app.contractor_id)));
+      // Fix: map raw Supabase data to Application[]
+      const rawApplications = (data || []) as any[];
+
+      const parsedApplications: Application[] = rawApplications.map((app) => ({
+        ...app,
+        jobs: Array.isArray(app.jobs) ? app.jobs[0] : app.jobs, // Ensure jobs is a single Job
+      }));
+
+      const contractorIds = Array.from(
+        new Set(parsedApplications.map((app) => app.contractor_id))
+      );
+
       const { data: contractorsData } = await supabase
-        .from<{ user_id: string; phone: string }>("profiles")
+        .from("profiles")
         .select("user_id, phone")
         .in("user_id", contractorIds);
 
-      const contractors = contractorsData || [];
-      const enrichedApps: Application[] = (data || []).map((app) => {
-        const contractor = contractors.find((c) => c.user_id === app.contractor_id);
+      const contractors = (contractorsData || []) as Contractor[];
+
+      const enrichedApps = parsedApplications.map((app) => {
+        const contractor = contractors.find(
+          (c) => c.user_id === app.contractor_id
+        );
         return { ...app, contractorPhone: contractor?.phone || null };
       });
 
@@ -93,12 +116,11 @@ export default function MyApplicationsPage() {
     fetchApplications();
   }, [router]);
 
-  // ✅ Start Shift → insert row in shift_logs
   const startShift = async (app: Application) => {
     const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
 
     const { data, error } = await supabase
-      .from<ShiftLog>("shift_logs")
+      .from("shift_logs")
       .insert({
         worker_id: storedProfile.user_id,
         contractor_id: app.contractor_id,
@@ -114,11 +136,12 @@ export default function MyApplicationsPage() {
       console.error(error);
       return;
     }
+
+    const shiftData = data as ShiftLog;
     alert("✅ शिफ्ट शुरू हो गई");
-    setActiveShift((prev) => ({ ...prev, [app.id]: data }));
+    setActiveShift((prev) => ({ ...prev, [app.id]: shiftData }));
   };
 
-  // ✅ End Shift → update row in shift_logs
   const endShift = async (app: Application) => {
     const shift = activeShift[app.id];
     if (!shift) {
@@ -127,7 +150,7 @@ export default function MyApplicationsPage() {
     }
 
     const { error } = await supabase
-      .from<ShiftLog>("shift_logs")
+      .from("shift_logs")
       .update({
         end_time: new Date().toISOString(),
         status: "completed",
@@ -139,13 +162,14 @@ export default function MyApplicationsPage() {
       console.error(error);
       return;
     }
+
     alert("✅ शिफ्ट समाप्त हो गई");
     setActiveShift((prev) => ({ ...prev, [app.id]: null }));
   };
 
-  // ✅ Emergency Button
   const emergencyAlert = (app: Application) => {
     alert("🚨 आपातकालीन अलर्ट भेजा गया (Contractor को सूचित करें)");
+    // Future: insert into alerts table
   };
 
   if (loading) return <p className="p-6">लोड हो रहा है...</p>;

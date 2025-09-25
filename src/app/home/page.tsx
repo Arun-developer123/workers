@@ -16,10 +16,11 @@ interface Profile {
 interface Job {
   id: string;
   title: string;
-  location: string;
+  location: string; // can be address or "lat,lng"
   wage: number | string;
   contractor_id: string;
   created_at?: string;
+  description?: string;
 }
 
 interface Application {
@@ -28,7 +29,7 @@ interface Application {
   contractor_id: string;
   job_id: string;
   status: "pending" | "accepted" | "rejected";
-  jobs?: Job[]; // ✅ FIX: array instead of object
+  jobs?: Job[]; // jobs array from join
   shiftstatus?: string | null;
 }
 
@@ -54,6 +55,8 @@ export default function HomePage() {
   const [wallet, setWallet] = useState<number>(0);
   const [ratingsGiven, setRatingsGiven] = useState<{ [key: string]: boolean }>({});
   const [myRating, setMyRating] = useState<number | null>(null);
+  const [expandedJobs, setExpandedJobs] = useState<{ [jobId: string]: boolean }>({});
+  const [completedApps, setCompletedApps] = useState<{ [appId: string]: boolean }>({});
   const router = useRouter();
 
   useEffect(() => {
@@ -65,65 +68,121 @@ export default function HomePage() {
     const parsedProfile: Profile = JSON.parse(storedProfile);
     setProfile(parsedProfile);
 
+    // fetch common data for both roles
+    fetchWallet(parsedProfile.user_id);
+    fetchMyRating(parsedProfile.user_id);
+
     if (parsedProfile.role === "worker") {
       fetchJobs();
-      fetchWallet(parsedProfile.user_id);
-      fetchMyRating(parsedProfile.user_id);
     } else if (parsedProfile.role === "contractor") {
       fetchContractorData(parsedProfile.user_id);
-      // optional: fetch contractor wallet so quick-stats show real value for contractor
-      fetchWallet(parsedProfile.user_id);
+      fetchJobsForContractor(parsedProfile.user_id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Worker → Available Jobs
+  // Worker → Available Jobs (all jobs)
   const fetchJobs = async () => {
-    const { data } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
-    setJobs((data as Job[]) || []);
+    try {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.error("fetchJobs error", error);
+        setJobs([]);
+        return;
+      }
+      setJobs((data as Job[]) || []);
+    } catch (err) {
+      console.error("fetchJobs unexpected", err);
+      setJobs([]);
+    }
+  };
+
+  // Contractor → fetch jobs posted by contractor
+  const fetchJobsForContractor = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("contractor_id", userId)
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.error("fetchJobsForContractor error", error);
+        setJobs([]);
+        return;
+      }
+      setJobs((data as Job[]) || []);
+    } catch (err) {
+      console.error("fetchJobsForContractor unexpected", err);
+      setJobs([]);
+    }
   };
 
   // Contractor → Applications + join shift_logs
   const fetchContractorData = async (userId: string) => {
-    const { data: apps } = await supabase
-      .from("applications")
-      .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage, contractor_id)")
-      .eq("contractor_id", userId)
-      .order("created_at", { ascending: false });
+    try {
+      const { data: apps, error } = await supabase
+        .from("applications")
+        // include job description as well
+        .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage, contractor_id, description)")
+        .eq("contractor_id", userId)
+        .order("created_at", { ascending: false });
 
-    if (!apps) {
+      if (error) {
+        console.error("fetchContractorData error", error);
+        setApplications([]);
+        return;
+      }
+
+      if (!apps) {
+        setApplications([]);
+        return;
+      }
+
+      const applicationsData = apps as Application[];
+
+      // Worker phones
+      const workerIds = Array.from(new Set(applicationsData.map((a) => a.worker_id)));
+      if (workerIds.length > 0) {
+        const { data: workersData } = await supabase
+          .from("profiles")
+          .select("user_id, phone")
+          .in("user_id", workerIds);
+
+        const map: { [key: string]: string } = {};
+        ((workersData as WorkerProfile[]) || []).forEach((w) => {
+          map[w.user_id] = w.phone;
+        });
+        setWorkersMap(map);
+      } else {
+        setWorkersMap({});
+      }
+
+      // Fetch shift_logs
+      const jobIds = applicationsData.map((a) => a.job_id).filter(Boolean);
+      let shifts: ShiftLog[] | null = null;
+      if (jobIds.length > 0) {
+        const { data: shiftsData } = await supabase
+          .from("shift_logs")
+          .select("worker_id, contractor_id, job_id, status")
+          .in("job_id", jobIds);
+        shifts = shiftsData as ShiftLog[] | null;
+      }
+
+      const merged = applicationsData.map((a) => {
+        const shift = (shifts || [])?.find(
+          (s) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
+        );
+        return { ...a, shiftstatus: shift?.status || null };
+      });
+
+      setApplications(merged);
+    } catch (err) {
+      console.error("fetchContractorData unexpected", err);
       setApplications([]);
-      return;
     }
-
-    const applicationsData = apps as Application[];
-
-    // Worker phones
-    const workerIds = Array.from(new Set(applicationsData.map((a) => a.worker_id)));
-    const { data: workersData } = await supabase
-      .from("profiles")
-      .select("user_id, phone")
-      .in("user_id", workerIds);
-
-    const map: { [key: string]: string } = {};
-    ((workersData as WorkerProfile[]) || []).forEach((w) => {
-      map[w.user_id] = w.phone;
-    });
-    setWorkersMap(map);
-
-    // Fetch shift_logs
-    const { data: shifts } = await supabase
-      .from("shift_logs")
-      .select("worker_id, contractor_id, job_id, status")
-      .in("job_id", applicationsData.map((a) => a.job_id));
-
-    const merged = applicationsData.map((a) => {
-      const shift = (shifts as ShiftLog[] | null)?.find(
-        (s) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
-      );
-      return { ...a, shiftstatus: shift?.status || null };
-    });
-
-    setApplications(merged);
   };
 
   // Worker → Apply Job
@@ -204,14 +263,12 @@ export default function HomePage() {
         return;
       }
 
-      // wage may be stored as text — parse to number
       const wageNum = Number(jobRow.wage);
       if (isNaN(wageNum) || wageNum <= 0) {
         alert("❌ इस जॉब का valid wage नहीं मिला");
         return;
       }
 
-      // Determine payer (contractor). Use jobRow.contractor_id fallback to app.contractor_id
       const contractorId = jobRow.contractor_id || app.contractor_id;
       if (!contractorId) {
         alert("❌ Contractor ID नहीं मिली");
@@ -264,8 +321,10 @@ export default function HomePage() {
         return;
       }
 
-      // Success
       alert(`✅ Worker को ₹${wageNum} का भुगतान कर दिया गया`);
+
+      // Mark app as paid locally
+      setCompletedApps((prev) => ({ ...prev, [app.id]: !!ratingsGiven[app.id] || true }));
 
       // Refresh wallets in UI: update worker's wallet and contractor's if logged-in user is contractor
       fetchWallet(app.worker_id);
@@ -299,6 +358,8 @@ export default function HomePage() {
     else {
       alert("✅ Rating save हो गई");
       setRatingsGiven({ ...ratingsGiven, [app.id]: true });
+      // if app was already paid earlier, mark completed
+      setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || true }));
     }
   };
 
@@ -318,18 +379,68 @@ export default function HomePage() {
   };
 
   const fetchWallet = async (userId: string) => {
-    const { data } = await supabase.from("wallets").select("balance").eq("user_id", userId).single();
-    setWallet((data?.balance as number) || 0);
+    try {
+      const { data } = await supabase.from("wallets").select("balance").eq("user_id", userId).single();
+      setWallet(Number((data?.balance as number) || 0));
+    } catch (err) {
+      console.error("fetchWallet unexpected", err);
+      setWallet(0);
+    }
   };
 
+  // Fetch average rating for a user (works for both worker & contractor)
   const fetchMyRating = async (userId: string) => {
-    const { data } = await supabase.from("ratings").select("rating").eq("rated_id", userId);
-    if (!data || data.length === 0) {
+    try {
+      const { data, error } = await supabase.from("ratings").select("rating").eq("rated_id", userId);
+      if (error) {
+        console.error("fetchMyRating error", error);
+        setMyRating(null);
+        return;
+      }
+      if (!data || data.length === 0) {
+        setMyRating(null);
+        return;
+      }
+      const avg = (data as { rating: number }[]).reduce((sum, r) => sum + (r.rating || 0), 0) / data.length;
+      setMyRating(Number(avg.toFixed(1)));
+    } catch (err) {
+      console.error("fetchMyRating unexpected", err);
       setMyRating(null);
+    }
+  };
+
+  // Toggle expand job tile to show description
+  const toggleJobExpand = (jobId: string) => {
+    setExpandedJobs((prev) => ({ ...prev, [jobId]: !prev[jobId] }));
+  };
+
+  // Add funds to contractor wallet (simple prompt-based)
+  const addFunds = async () => {
+    const amountStr = prompt("कितनी राशि जोड़नी है (₹):");
+    if (!amountStr) return;
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      alert("कृपया वैध राशि दर्ज करें");
       return;
     }
-    const avg = (data as { rating: number }[]).reduce((sum, r) => sum + r.rating, 0) / data.length;
-    setMyRating(Number(avg.toFixed(1)));
+
+    try {
+      // upsert row in wallets table (increment)
+      const { data: existing } = await supabase.from("wallets").select("balance").eq("user_id", profile?.user_id).single();
+      const current = Number(existing?.balance || 0);
+      const newBal = current + amount;
+      const { error } = await supabase.from("wallets").upsert({ user_id: profile?.user_id, balance: newBal });
+      if (error) {
+        console.error("addFunds error", error);
+        alert("❌ वॉलेट में राशि जोड़ने में समस्या");
+        return;
+      }
+      setWallet(newBal);
+      alert(`✅ ₹${amount} वॉलेट में जोड़ दिए गए`);
+    } catch (err) {
+      console.error("addFunds unexpected", err);
+      alert("❌ समस्या हुई");
+    }
   };
 
   if (!profile) return <p className="p-6">लोड हो रहा है...</p>;
@@ -354,7 +465,7 @@ export default function HomePage() {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <div className="bg-white rounded-xl p-4 shadow hover:scale-[1.01] transition-transform">
           <div className="flex items-center justify-between">
             <div>
@@ -381,21 +492,6 @@ export default function HomePage() {
           </div>
           <div className="mt-3 text-sm opacity-70">सकारात्मक रेटिंग से काम मिलने की संभावना बढ़ती है</div>
         </div>
-
-        <div className="bg-white rounded-xl p-4 shadow flex flex-col justify-between hover:scale-[1.01] transition-transform">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm opacity-80">त्वरित कार्य</div>
-              <div className="text-2xl font-bold">तेज़ आवेदन</div>
-            </div>
-            <div>
-              <button onClick={() => router.push("/jobs/new")} className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-3 py-2 rounded-lg font-semibold">
-                नया काम डालें
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 text-sm opacity-70">कॉन्ट्रैक्टर तुरंत जॉब पोस्ट कर सकते हैं</div>
-        </div>
       </div>
 
       {/* Worker Dashboard */}
@@ -416,22 +512,33 @@ export default function HomePage() {
             <p className="mb-4">⭐ रेटिंग: <span className="font-bold">{myRating ? myRating : "अभी कोई रेटिंग नहीं"}</span></p>
 
             <h3 className="text-lg font-semibold mb-3">उपलब्ध काम</h3>
+
+            {/* Jobs: show one-per-row horizontally (full width rows) with expandable description */}
             {jobs.length === 0 ? (
               <div className="p-6 border border-dashed rounded-lg text-center opacity-80">अभी कोई काम उपलब्ध नहीं है ❌</div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-4">
                 {jobs.map((job) => (
-                  <div key={job.id} className="border rounded-xl p-4 shadow hover:shadow-lg transition-shadow bg-white">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-lg font-bold">{job.title}</div>
-                        <div className="text-sm opacity-80 mt-1">स्थान: {job.location}</div>
-                        <div className="text-sm opacity-70 mt-2">₹{job.wage} भुगतान</div>
-                        <div className="text-xs opacity-60 mt-1">Posted: {job.created_at ? new Date(job.created_at).toLocaleString() : "—"}</div>
-                      </div>
-                      <div className="flex flex-col gap-2 items-end">
+                  <div key={job.id} className="border rounded-xl p-4 shadow hover:shadow-lg transition-shadow bg-white w-full flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="text-lg font-bold">{job.title}</div>
+                      <div className="text-sm opacity-80 mt-1">स्थान: {renderLocation(job.location)}</div>
+                      <div className="text-sm opacity-70 mt-2">₹{job.wage} भुगतान</div>
+                      <div className="text-xs opacity-60 mt-1">Posted: {job.created_at ? new Date(job.created_at).toLocaleString() : "—"}</div>
+
+                      {/* expanded description */}
+                      {expandedJobs[job.id] && (
+                        <div className="mt-3 text-sm text-gray-700">
+                          <h4 className="font-semibold">डिस्क्रिप्शन</h4>
+                          <p className="mt-1">{job.description || "डिस्क्रिप्शन उपलब्ध नहीं है"}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2 items-end md:items-center md:justify-center">
+                      <div className="flex flex-col gap-2">
                         <button onClick={() => applyJob(job.id)} className="bg-gradient-to-r from-green-500 to-lime-500 text-white py-2 px-4 rounded-lg font-semibold">आवेदन करें ✅</button>
-                        <button onClick={() => router.push("/jobs/" + job.id)} className="text-sm underline opacity-80">डिटेल देखें</button>
+                        <button onClick={() => toggleJobExpand(job.id)} className="text-sm underline opacity-80">{expandedJobs[job.id] ? "डिस्क्रिप्शन छुपाएँ" : "डिटेल देखें"}</button>
                       </div>
                     </div>
                   </div>
@@ -447,8 +554,10 @@ export default function HomePage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
-            <div className="flex gap-2">
-              <button onClick={() => router.push("/jobs/new")} className="bg-green-700 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
+            <div className="flex gap-2 items-center">
+              <div className="text-sm mr-2">वॉलेट: <span className="font-bold">₹{wallet}</span></div>
+              <button onClick={addFunds} className="bg-green-700 text-white py-2 px-3 rounded-lg">Add +</button>
+              <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
             </div>
           </div>
 
@@ -458,13 +567,28 @@ export default function HomePage() {
             <div className="space-y-4">
               {applications.map((app) => {
                 const workerPhone = workersMap[app.worker_id] || null;
+                const isCompleted = !!completedApps[app.id] && !!ratingsGiven[app.id];
+
+                // Show green border until both pay & rating are done
+                const shouldHighlightGreen = !isCompleted && (app.status === "pending" || app.status === "accepted");
+
+                // safe wage display
+                const wageDisplay = app.jobs?.[0]?.wage ?? "—";
+
                 return (
-                  <div key={app.id} className="border rounded-xl p-4 shadow-md bg-white">
+                  <div
+                    key={app.id}
+                    className={`border rounded-xl p-4 shadow-md bg-white ${isCompleted ? "border-red-500" : shouldHighlightGreen ? "border-green-500" : "border-gray-200"}`}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="text-lg font-bold">{app.jobs?.[0]?.title} <span className="text-sm opacity-70">({app.jobs?.[0]?.location})</span></div>
+                        <div className="text-lg font-bold">{app.jobs?.[0]?.title ?? "Job" } <span className="text-sm opacity-70">({app.jobs?.[0]?.location ?? "—"})</span></div>
                         <div className="text-sm opacity-70 mt-1">स्थिति: <span className={`font-semibold ${app.status === 'pending' ? 'text-yellow-600' : app.status === 'accepted' ? 'text-green-600' : 'text-red-600'}`}>{app.status}</span></div>
                         <div className="text-sm opacity-60 mt-1">शिफ्ट: <span className="font-medium">{app.shiftstatus || '—'}</span></div>
+                        <div className="text-sm opacity-60 mt-1">वेज: <span className="font-medium">₹{wageDisplay}</span></div>
+                        {isCompleted && (
+                          <div className="mt-2 text-sm font-semibold text-red-700">✅ Job Done</div>
+                        )}
                       </div>
 
                       <div className="flex flex-col gap-2 items-end">
@@ -476,20 +600,40 @@ export default function HomePage() {
                           </div>
                         )}
 
-                        {app.status === "accepted" && workerPhone && (
-                          <div className="flex gap-2">
-                            <a href={`tel:${workerPhone}`} className="px-3 py-2 rounded-lg bg-green-600 text-white">कॉल करें</a>
-                            <a href={`https://wa.me/${workerPhone.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" className="px-3 py-2 rounded-lg bg-blue-600 text-white">व्हाट्सएप</a>
-                          </div>
-                        )}
-
-                        {app.shiftstatus === "completed" && (
-                          <div className="flex flex-col gap-2 w-full">
-                            <button onClick={() => payWorker(app)} className="bg-purple-600 text-white py-2 px-3 rounded-lg w-full">भुगतान करें ₹{app.jobs?.[0]?.wage}</button>
-                            {!ratingsGiven[app.id] && (
-                              <button onClick={() => rateWorker(app)} className="bg-orange-500 text-white py-2 px-3 rounded-lg w-full">Rate Worker ⭐</button>
+                        {/* If accepted and not completed, show contact + pay/rate when appropriate */}
+                        {app.status === "accepted" && !isCompleted && (
+                          <>
+                            {workerPhone && (
+                              <div className="flex gap-2">
+                                <a href={`tel:${workerPhone}`} className="px-3 py-2 rounded-lg bg-green-600 text-white">कॉल करें</a>
+                                <a href={`https://wa.me/${workerPhone.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" className="px-3 py-2 rounded-lg bg-blue-600 text-white">व्हाट्सएप</a>
+                              </div>
                             )}
-                          </div>
+
+                            <div className="flex flex-col gap-2 w-full mt-2">
+                              {/* show pay button only if shiftstatus is completed */}
+                              {app.shiftstatus === "completed" && (
+                                <>
+                                  <button onClick={async () => {
+                                    await payWorker(app);
+                                    // after paying, if rating was given, mark as fully completed
+                                    const bothDone = !!ratingsGiven[app.id];
+                                    if (bothDone) {
+                                      setCompletedApps((p) => ({ ...p, [app.id]: true }));
+                                    }
+                                  }} className="bg-purple-600 text-white py-2 px-3 rounded-lg w-full">भुगतान करें ₹{wageDisplay}</button>
+
+                                  {!ratingsGiven[app.id] && (
+                                    <button onClick={async () => {
+                                      await rateWorker(app);
+                                      const bothDone = !!completedApps[app.id];
+                                      if (bothDone) setCompletedApps((p) => ({ ...p, [app.id]: true }));
+                                    }} className="bg-orange-500 text-white py-2 px-3 rounded-lg w-full">Rate Worker ⭐</button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -502,4 +646,22 @@ export default function HomePage() {
       )}
     </div>
   );
+}
+
+// Helper: render location as human link if lat,lng else show text
+function renderLocation(location: string | undefined) {
+  if (!location) return "—";
+  // crude lat,lng detection
+  const coordsMatch = location.match(/^\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*$/);
+  if (coordsMatch) {
+    const lat = coordsMatch[1];
+    const lng = coordsMatch[2];
+    const maps = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    return (
+      <a href={maps} target="_blank" rel="noopener noreferrer" className="underline">
+        देखें (क्लिक करें)
+      </a>
+    );
+  }
+  return location;
 }

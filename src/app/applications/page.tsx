@@ -45,15 +45,21 @@ type ActiveShifts = {
 
 type RawApplicationFromSupabase = Omit<Application, "jobs"> & { jobs: Job[] };
 
+type RatingFormState = {
+  rating: number;
+  review: string;
+};
+
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeShift, setActiveShift] = useState<ActiveShifts>({});
+  const [showRatingForm, setShowRatingForm] = useState<string | null>(null); // app.id
+  const [ratingForm, setRatingForm] = useState<RatingFormState>({ rating: 5, review: "" });
   const router = useRouter();
 
   useEffect(() => {
     const fetchApplications = async () => {
-      // Client-side only: localStorage check
       const storedProfile = localStorage.getItem("fake_user_profile");
       if (!storedProfile) {
         router.push("/auth/sign-in");
@@ -68,7 +74,6 @@ export default function MyApplicationsPage() {
         return;
       }
 
-      // Fetch applications
       try {
         const { data, error } = await supabase
           .from("applications")
@@ -171,6 +176,30 @@ export default function MyApplicationsPage() {
 
     alert("✅ शिफ्ट समाप्त हो गई");
     setActiveShift((prev) => ({ ...prev, [app.id]: null }));
+    setShowRatingForm(app.id); // अब rating form दिखेगा
+  };
+
+  const submitRating = async (app: Application) => {
+    const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
+
+    try {
+      const { error } = await supabase.from("ratings").insert({
+        rater_id: storedProfile.user_id,
+        rated_id: app.contractor_id,
+        job_id: app.job_id,
+        rating: ratingForm.rating,
+        review: ratingForm.review,
+      });
+
+      if (error) throw error;
+
+      alert("✅ रेटिंग सफलतापूर्वक सबमिट हुई");
+      setShowRatingForm(null);
+      setRatingForm({ rating: 5, review: "" });
+    } catch (err) {
+      console.error("❌ Rating insert error:", err);
+      alert("रेटिंग सबमिट करने में समस्या हुई");
+    }
   };
 
   const emergencyAlert = (app: Application) => {
@@ -193,13 +222,20 @@ export default function MyApplicationsPage() {
         <div className="space-y-4">
           {applications.map((app) => {
             const shift = activeShift[app.id];
+            const isRatingVisible = showRatingForm === app.id;
+
             return (
-              <div key={app.id} className="border rounded-lg p-4 shadow flex flex-col gap-2">
+              <div
+                key={app.id}
+                className="border rounded-lg p-4 shadow flex flex-col gap-2"
+              >
                 <p className="text-lg font-bold">
                   {app.jobs?.title || "—"} ({app.jobs?.location || "—"})
                 </p>
                 <p>मज़दूरी: ₹{app.jobs?.wage || "—"}</p>
-                <p className="text-sm text-gray-600">विवरण: {app.jobs?.description || "—"}</p>
+                <p className="text-sm text-gray-600">
+                  विवरण: {app.jobs?.description || "—"}
+                </p>
                 <p className="font-semibold">
                   स्थिति:{" "}
                   {app.status === "pending" && "⏳ प्रतीक्षा में"}
@@ -227,12 +263,55 @@ export default function MyApplicationsPage() {
                     </div>
 
                     {!shift ? (
-                      <button
-                        onClick={() => startShift(app)}
-                        className="bg-yellow-600 text-white py-2 rounded-lg"
-                      >
-                        शिफ्ट शुरू करें 🟢
-                      </button>
+                      <>
+                        {!isRatingVisible && (
+                          <button
+                            onClick={() => startShift(app)}
+                            className="bg-yellow-600 text-white py-2 rounded-lg"
+                          >
+                            शिफ्ट शुरू करें 🟢
+                          </button>
+                        )}
+
+                        {isRatingVisible && (
+                          <div className="mt-2 border p-3 rounded-lg bg-gray-100">
+                            <h3 className="font-semibold mb-2">कॉन्ट्रैक्टर को रेट करें ⭐</h3>
+                            <select
+                              value={ratingForm.rating}
+                              onChange={(e) =>
+                                setRatingForm((prev) => ({
+                                  ...prev,
+                                  rating: Number(e.target.value),
+                                }))
+                              }
+                              className="w-full border rounded p-2 mb-2"
+                            >
+                              {[1, 2, 3, 4, 5].map((r) => (
+                                <option key={r} value={r}>
+                                  {r} स्टार
+                                </option>
+                              ))}
+                            </select>
+                            <textarea
+                              value={ratingForm.review}
+                              onChange={(e) =>
+                                setRatingForm((prev) => ({
+                                  ...prev,
+                                  review: e.target.value,
+                                }))
+                              }
+                              placeholder="रिव्यू लिखें..."
+                              className="w-full border rounded p-2 mb-2"
+                            />
+                            <button
+                              onClick={() => submitRating(app)}
+                              className="bg-green-700 text-white py-2 rounded-lg w-full"
+                            >
+                              सबमिट करें ✅
+                            </button>
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <>
                         <button

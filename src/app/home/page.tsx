@@ -47,6 +47,18 @@ interface WorkerProfile {
   phone: string;
 }
 
+interface OtpRow {
+  id: string;
+  application_id: string;
+  contractor_id: string;
+  worker_id: string;
+  job_id: string;
+  otp_code: string;
+  type: "start" | "end";
+  expires_at: string;
+  used: boolean;
+}
+
 export default function HomePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -57,6 +69,7 @@ export default function HomePage() {
   const [myRating, setMyRating] = useState<number | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<{ [jobId: string]: boolean }>({});
   const [completedApps, setCompletedApps] = useState<{ [appId: string]: boolean }>({});
+  const [pendingOtpsMap, setPendingOtpsMap] = useState<{ [applicationId: string]: OtpRow[] }>({});
   const router = useRouter();
 
   useEffect(() => {
@@ -120,7 +133,7 @@ export default function HomePage() {
     }
   };
 
-  // Contractor → Applications + join shift_logs
+  // Contractor → Applications + join shift_logs + pending OTPs
   const fetchContractorData = async (userId: string) => {
     try {
       const { data: apps, error } = await supabase
@@ -179,9 +192,33 @@ export default function HomePage() {
       });
 
       setApplications(merged);
+
+      // Fetch pending OTPs for this contractor (unused and not expired)
+      const nowIso = new Date().toISOString();
+      const { data: otpsData, error: otpsErr } = await supabase
+        .from("shift_otps")
+        .select("*")
+        .eq("contractor_id", userId)
+        .eq("used", false)
+        .gt("expires_at", nowIso);
+
+      if (otpsErr) {
+        console.error("fetch OTPs error", otpsErr);
+        setPendingOtpsMap({});
+        return;
+      }
+
+      const otps = (otpsData || []) as OtpRow[];
+      const mapByApp: { [applicationId: string]: OtpRow[] } = {};
+      otps.forEach((o) => {
+        if (!mapByApp[o.application_id]) mapByApp[o.application_id] = [];
+        mapByApp[o.application_id].push(o);
+      });
+      setPendingOtpsMap(mapByApp);
     } catch (err) {
       console.error("fetchContractorData unexpected", err);
       setApplications([]);
+      setPendingOtpsMap({});
     }
   };
 
@@ -210,7 +247,7 @@ export default function HomePage() {
     }
   };
 
-  // Worker → Start Shift
+  // Worker → Start Shift (contractor side - contractor may also start shift via UI but primary flow is worker prompts)
   const startShift = async (app: Application) => {
     const { error } = await supabase.from("shift_logs").insert({
       worker_id: app.worker_id,
@@ -227,7 +264,7 @@ export default function HomePage() {
     fetchContractorData(app.contractor_id);
   };
 
-  // Worker → End Shift
+  // Worker → End Shift (contractor side helper)
   const endShift = async (app: Application) => {
     const { error } = await supabase
       .from("shift_logs")
@@ -332,7 +369,7 @@ export default function HomePage() {
         setWallet(newContractorBalance);
       }
 
-      // Optionally refresh contractor data (applications, shifts)
+      // Optionally refresh contractor data (applications, shifts, OTPs)
       fetchContractorData(contractorId);
     } catch (err) {
       console.error("payWorker unexpected error", err);
@@ -575,6 +612,9 @@ export default function HomePage() {
                 // safe wage display
                 const wageDisplay = app.jobs?.[0]?.wage ?? "—";
 
+                // Pending OTPs for this application (if any)
+                const otpsForApp = pendingOtpsMap[app.id] || [];
+
                 return (
                   <div
                     key={app.id}
@@ -586,6 +626,22 @@ export default function HomePage() {
                         <div className="text-sm opacity-70 mt-1">स्थिति: <span className={`font-semibold ${app.status === 'pending' ? 'text-yellow-600' : app.status === 'accepted' ? 'text-green-600' : 'text-red-600'}`}>{app.status}</span></div>
                         <div className="text-sm opacity-60 mt-1">शिफ्ट: <span className="font-medium">{app.shiftstatus || '—'}</span></div>
                         <div className="text-sm opacity-60 mt-1">वेज: <span className="font-medium">₹{wageDisplay}</span></div>
+
+                        {/* Show pending OTPs (so contractor can give OTP to worker) */}
+                        {otpsForApp.length > 0 && (
+                          <div className="mt-2 p-2 bg-yellow-50 border rounded">
+                            <div className="text-sm font-semibold">Pending OTPs:</div>
+                            {otpsForApp.map((o) => (
+                              <div key={o.id} className="text-sm mt-1">
+                                <span className="font-medium">{o.type === "start" ? "Start OTP" : "End OTP"}:</span>{" "}
+                                <span className="inline-block ml-2 px-2 py-1 bg-gray-100 rounded">{o.otp_code}</span>
+                                <span className="text-xs opacity-70 ml-2">expires: {new Date(o.expires_at).toLocaleTimeString()}</span>
+                              </div>
+                            ))}
+                            <div className="mt-1 text-xs opacity-70">इन OTP को worker को दें — वे इन्हें app में दर्ज करेंगे</div>
+                          </div>
+                        )}
+
                         {isCompleted && (
                           <div className="mt-2 text-sm font-semibold text-red-700">✅ Job Done</div>
                         )}

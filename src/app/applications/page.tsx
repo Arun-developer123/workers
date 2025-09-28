@@ -109,9 +109,7 @@ export default function MyApplicationsPage() {
         const contractors = (contractorsData || []) as Contractor[];
 
         const enrichedApps = parsedApplications.map((app) => {
-          const contractor = contractors.find(
-            (c) => c.user_id === app.contractor_id
-          );
+          const contractor = contractors.find((c) => c.user_id === app.contractor_id);
           return { ...app, contractorPhone: contractor?.phone || null };
         });
 
@@ -127,32 +125,192 @@ export default function MyApplicationsPage() {
     fetchApplications();
   }, [router]);
 
-  const startShift = async (app: Application) => {
-    const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
+  // Helper: generate 6-digit OTP
+  const generateOtpCode = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
 
+  // Create OTP record in DB (shift_otps) for contractor to see on their dashboard.
+  const createOtpRecord = async (payload: {
+    application_id: string;
+    contractor_id: string;
+    worker_id: string;
+    job_id: string;
+    type: "start" | "end";
+  }) => {
+    const code = generateOtpCode();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 5).toISOString(); // 5 minutes
     const { data, error } = await supabase
-      .from("shift_logs")
+      .from("shift_otps")
       .insert({
-        worker_id: storedProfile.user_id,
-        contractor_id: app.contractor_id,
-        job_id: app.job_id,
-        start_time: new Date().toISOString(),
-        status: "ongoing",
+        application_id: payload.application_id,
+        contractor_id: payload.contractor_id,
+        worker_id: payload.worker_id,
+        job_id: payload.job_id,
+        otp_code: code,
+        type: payload.type,
+        expires_at: expiresAt,
+        used: false,
       })
       .select()
       .single();
 
     if (error) {
-      alert("❌ शिफ्ट शुरू करने में समस्या");
-      console.error(error);
+      console.error("createOtpRecord error", error);
+      return null;
+    }
+    return data;
+  };
+
+  // Validate OTP for a given application and type
+  const validateOtp = async (applicationId: string, code: string, type: "start" | "end") => {
+    try {
+      const { data, error } = await supabase
+        .from("shift_otps")
+        .select("*")
+        .eq("application_id", applicationId)
+        .eq("otp_code", code)
+        .eq("type", type)
+        .eq("used", false)
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        return { valid: false, row: null };
+      }
+
+      const otpRow: any = data;
+      if (otpRow.expires_at && new Date(otpRow.expires_at) < new Date()) {
+        return { valid: false, row: otpRow };
+      }
+      return { valid: true, row: otpRow };
+    } catch (err) {
+      console.error("validateOtp error", err);
+      return { valid: false, row: null };
+    }
+  };
+
+  // Mark OTP used
+  const markOtpUsed = async (otpId: string) => {
+    try {
+      const { error } = await supabase.from("shift_otps").update({ used: true }).eq("id", otpId);
+      if (error) console.error("markOtpUsed error", error);
+    } catch (err) {
+      console.error("markOtpUsed unexpected", err);
+    }
+  };
+
+  // START SHIFT flow with OTP + contractor wallet deduction (worker prompted for OTP)
+  const startShift = async (app: Application) => {
+    const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
+    const workerId = storedProfile.user_id;
+
+    // create OTP record (contractor will see it on their dashboard)
+    const otp = await createOtpRecord({
+      application_id: app.id,
+      contractor_id: app.contractor_id,
+      worker_id: workerId,
+      job_id: app.job_id,
+      type: "start",
+    });
+
+    if (!otp) {
+      alert("❌ शिफ्ट शुरू करने के लिए OTP बनाते समय समस्या हुई");
       return;
     }
 
-    const shiftData = data as ShiftLog;
-    alert("✅ शिफ्ट शुरू हो गई");
-    setActiveShift((prev) => ({ ...prev, [app.id]: shiftData }));
+    alert(
+      "🔐 OTP contractor के dashboard पर भेज दिया गया है — contractor से OTP लें और उसे दर्ज करें। (OTP 5 मिनट में समाप्त हो जाएगा)"
+    );
+
+    // Prompt worker to enter OTP provided by contractor
+    const entered = prompt("कृपया contractor द्वारा दिया गया START OTP दर्ज करें:");
+    if (!entered) {
+      alert("❌ OTP दर्ज नहीं किया गया");
+      return;
+    }
+
+    const { valid, row } = await validateOtp(app.id, entered.trim(), "start");
+    if (!valid || !row) {
+      alert("❌ OTP गलत या expired है");
+      return;
+    }
+
+    // Fetch wage (prefer job object)
+    const wageNum = Number(app.jobs?.wage || 0);
+    if (isNaN(wageNum) || wageNum <= 0) {
+      alert("❌ इस जॉब का valid wage नहीं मिला");
+      return;
+    }
+
+    // Ensure contractor has sufficient balance, then deduct
+    try {
+      const { data: walletRow, error: walletErr } = await supabase
+        .from("wallets")
+        .select("balance")
+        .eq("user_id", app.contractor_id)
+        .single();
+
+      if (walletErr || !walletRow) {
+        console.error("wallet fetch error", walletErr);
+        alert("❌ Contractor का वॉलेट नहीं मिला");
+        return;
+      }
+
+      const contractorBalance = Number(walletRow.balance || 0);
+      if (contractorBalance < wageNum) {
+        alert("❌ Contractor के पास पर्याप्त बैलेंस नहीं है — पहले contractor वॉलेट रिचार्ज करें");
+        return;
+      }
+
+      // Deduct contractor balance
+      const newContractorBalance = contractorBalance - wageNum;
+      const { error: deductErr } = await supabase
+        .from("wallets")
+        .update({ balance: newContractorBalance })
+        .eq("user_id", app.contractor_id);
+
+      if (deductErr) {
+        console.error("deduct error", deductErr);
+        alert("❌ Contractor के वॉलेट से राशि घटाने में समस्या");
+        return;
+      }
+
+      // Mark OTP used
+      await markOtpUsed(row.id);
+
+      // Create shift_log (ongoing)
+      const { data: shiftData, error: shiftErr } = await supabase
+        .from("shift_logs")
+        .insert({
+          worker_id: workerId,
+          contractor_id: app.contractor_id,
+          job_id: app.job_id,
+          start_time: new Date().toISOString(),
+          status: "ongoing",
+        })
+        .select()
+        .single();
+
+      if (shiftErr) {
+        console.error("shift insert error", shiftErr);
+        // rollback contractor deduction (best-effort)
+        await supabase.from("wallets").update({ balance: contractorBalance }).eq("user_id", app.contractor_id);
+        alert("❌ शिफ्ट शुरू करने में समस्या — रिवर्ट हो रहा है");
+        return;
+      }
+
+      const shift: ShiftLog = shiftData as ShiftLog;
+      alert("✅ शिफ्ट सफलतापूर्वक शुरू हो गई — Contractor के वॉलेट से राशि कट चुकी है (Worker को तब तक क्रेडिट नहीं मिली)");
+
+      setActiveShift((prev) => ({ ...prev, [app.id]: shift }));
+    } catch (err) {
+      console.error("startShift unexpected", err);
+      alert("❌ शिफ्ट शुरू करने में समस्या");
+    }
   };
 
+  // END SHIFT flow with OTP + credit worker wallet only after OTP validated
   const endShift = async (app: Application) => {
     const shift = activeShift[app.id];
     if (!shift) {
@@ -160,23 +318,83 @@ export default function MyApplicationsPage() {
       return;
     }
 
-    const { error } = await supabase
-      .from("shift_logs")
-      .update({
-        end_time: new Date().toISOString(),
-        status: "completed",
-      })
-      .eq("id", shift.id);
+    // create OTP for end
+    const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
+    const workerId = storedProfile.user_id;
 
-    if (error) {
-      alert("❌ शिफ्ट समाप्त करने में समस्या");
-      console.error(error);
+    const otp = await createOtpRecord({
+      application_id: app.id,
+      contractor_id: app.contractor_id,
+      worker_id: workerId,
+      job_id: app.job_id,
+      type: "end",
+    });
+
+    if (!otp) {
+      alert("❌ End OTP बनाते समय समस्या हुई");
       return;
     }
 
-    alert("✅ शिफ्ट समाप्त हो गई");
-    setActiveShift((prev) => ({ ...prev, [app.id]: null }));
-    setShowRatingForm(app.id); // अब rating form दिखेगा
+    alert(
+      "🔐 End OTP contractor के dashboard पर भेज दिया गया है — contractor से OTP लें और उसे दर्ज करें। (OTP 5 मिनट में समाप्त हो जाएगा)"
+    );
+
+    const entered = prompt("कृपया contractor द्वारा दिया गया END OTP दर्ज करें:");
+    if (!entered) {
+      alert("❌ OTP दर्ज नहीं किया गया");
+      return;
+    }
+
+    const { valid, row } = await validateOtp(app.id, entered.trim(), "end");
+    if (!valid || !row) {
+      alert("❌ OTP गलत या expired है");
+      return;
+    }
+
+    try {
+      // Mark OTP used
+      await markOtpUsed(row.id);
+
+      // Update shift_logs: set end_time + status completed (use shift.id)
+      const { error: endErr } = await supabase
+        .from("shift_logs")
+        .update({
+          end_time: new Date().toISOString(),
+          status: "completed",
+        })
+        .eq("id", shift.id);
+
+      if (endErr) {
+        console.error("end shift update error", endErr);
+        alert("❌ शिफ्ट समाप्त करने में समस्या");
+        return;
+      }
+
+      // Credit worker wallet via RPC increment_wallet (same as contractor flow)
+      const wageNum = Number(app.jobs?.wage || 0);
+      if (isNaN(wageNum) || wageNum <= 0) {
+        alert("❌ इस जॉब का valid wage नहीं मिला");
+        return;
+      }
+
+      const { error: incErr } = await supabase.rpc("increment_wallet", {
+        worker_id: workerId,
+        amount: wageNum,
+      });
+
+      if (incErr) {
+        console.error("increment_wallet error", incErr);
+        alert("❌ Worker को भुगतान करने में समस्या हुई — कृपया support से संपर्क करें");
+        return;
+      }
+
+      alert("✅ शिफ्ट समाप्त मानी गई और Worker के वॉलेट में राशि क्रेडिट कर दी गई");
+      setActiveShift((prev) => ({ ...prev, [app.id]: null }));
+      setShowRatingForm(app.id); // अब rating form दिखेगा
+    } catch (err) {
+      console.error("endShift unexpected", err);
+      alert("❌ शिफ्ट समाप्त करने में समस्या");
+    }
   };
 
   const submitRating = async (app: Application) => {

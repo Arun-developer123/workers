@@ -50,6 +50,19 @@ type RatingFormState = {
   review: string;
 };
 
+type ShiftOtp = {
+  id: string;
+  application_id: string;
+  contractor_id: string;
+  worker_id: string;
+  job_id: string;
+  otp_code: string;
+  type: "start" | "end";
+  expires_at: string;
+  used: boolean;
+};
+
+
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,7 +192,7 @@ export default function MyApplicationsPage() {
         return { valid: false, row: null };
       }
 
-      const otpRow: any = data;
+      const otpRow = data as ShiftOtp;
       if (otpRow.expires_at && new Date(otpRow.expires_at) < new Date()) {
         return { valid: false, row: otpRow };
       }

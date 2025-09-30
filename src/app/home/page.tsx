@@ -670,15 +670,7 @@ export default function HomePage() {
                               {/* show pay button only if shiftstatus is completed */}
                               {app.shiftstatus === "completed" && (
                                 <>
-                                  <button onClick={async () => {
-                                    await payWorker(app);
-                                    // after paying, if rating was given, mark as fully completed
-                                    const bothDone = !!ratingsGiven[app.id];
-                                    if (bothDone) {
-                                      setCompletedApps((p) => ({ ...p, [app.id]: true }));
-                                    }
-                                  }} className="bg-purple-600 text-white py-2 px-3 rounded-lg w-full">भुगतान करें ₹{wageDisplay}</button>
-
+                                  
                                   {!ratingsGiven[app.id] && (
                                     <button onClick={async () => {
                                       await rateWorker(app);

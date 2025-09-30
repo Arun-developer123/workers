@@ -247,21 +247,134 @@ export default function HomePage() {
     }
   };
 
-  // Worker → Start Shift (contractor side - contractor may also start shift via UI but primary flow is worker prompts)
+  // ---------- Helper: compute displayed (contractor) wage ----------
+  const computeDisplayedWage = (raw: string | number | null | undefined) => {
+    const base = Number(raw || 0);
+    if (!base || isNaN(base) || base <= 0) return 0;
+    const marked = base * 1.1; // +10%
+    const roundedUp50 = Math.ceil(marked / 50) * 50; // round up to next multiple of 50
+    return roundedUp50;
+  };
+
+  // Worker → Start Shift
+  // Now: when starting shift, deduct contractor wallet by worker's profile wage (10% markup + round up to 50)
   const startShift = async (app: Application) => {
-    const { error } = await supabase.from("shift_logs").insert({
-      worker_id: app.worker_id,
-      contractor_id: app.contractor_id,
-      job_id: app.job_id,
-      start_time: new Date().toISOString(),
-      status: "ongoing",
-    });
-    if (error) {
-      alert("❌ शिफ्ट शुरू नहीं हो सकी");
-      return;
+    try {
+      // 0) basic checks
+      if (!app || !app.worker_id || !app.contractor_id) {
+        alert("❌ Invalid application details");
+        return;
+      }
+
+      // 1) fetch worker's profile wage from profiles table
+      const { data: workerProfile, error: wpErr } = await supabase
+        .from("profiles")
+        .select("wage")
+        .eq("user_id", app.worker_id)
+        .single();
+
+      if (wpErr) {
+        console.error("startShift: worker profile fetch error", wpErr);
+        alert("❌ Worker की प्रोफ़ाइल नहीं मिली");
+        return;
+      }
+
+      const baseWage = Number((workerProfile as any)?.wage || 0);
+      if (isNaN(baseWage) || baseWage <= 0) {
+        alert("❌ Worker का valid wage नहीं मिला — शिफ्ट शुरू नहीं हो सकती");
+        return;
+      }
+
+      // 2) compute amount to deduct (10% markup + round up to 50)
+      const amountToDeduct = computeDisplayedWage(baseWage);
+      if (!amountToDeduct || amountToDeduct <= 0) {
+        alert("❌ गणना में समस्या — शिफ्ट शुरू नहीं हो सकती");
+        return;
+      }
+
+      // 3) fetch contractor wallet
+      const { data: contractorWalletRow, error: walletErr } = await supabase
+        .from("wallets")
+        .select("balance")
+        .eq("user_id", app.contractor_id)
+        .single();
+
+      if (walletErr || !contractorWalletRow) {
+        console.error("startShift: contractor wallet fetch error", walletErr);
+        alert("❌ Contractor का वॉलेट नहीं मिला");
+        return;
+      }
+
+      const contractorBalance = Number(contractorWalletRow.balance || 0);
+      if (contractorBalance < amountToDeduct) {
+        alert(`❌ Contractor के पास पर्याप्त बैलेंस नहीं है — ₹${amountToDeduct} चाहिए`);
+        return;
+      }
+
+      // 4) Deduct contractor balance (update)
+      const newContractorBalance = contractorBalance - amountToDeduct;
+      const { error: deductErr } = await supabase
+        .from("wallets")
+        .update({ balance: newContractorBalance })
+        .eq("user_id", app.contractor_id);
+
+      if (deductErr) {
+        console.error("startShift: deduct contractor error", deductErr);
+        alert("❌ Contractor के वॉलेट से राशि घटाने में समस्या");
+        return;
+      }
+
+      // 5) Credit worker using existing RPC increment_wallet
+      const { error: incErr } = await supabase.rpc("increment_wallet", {
+        worker_id: app.worker_id,
+        amount: amountToDeduct,
+      });
+
+      if (incErr) {
+        console.error("startShift: increment worker error", incErr);
+        // rollback contractor deduction (best-effort)
+        await supabase.from("wallets").update({ balance: contractorBalance }).eq("user_id", app.contractor_id);
+        alert("❌ Worker को क्रेडिट करने में समस्या — ट्रांज़ैक्शन रिवर्ट की जा रही है");
+        return;
+      }
+
+      // 6) Insert shift_logs record (mark ongoing)
+      const { error: insertShiftErr } = await supabase.from("shift_logs").insert({
+        worker_id: app.worker_id,
+        contractor_id: app.contractor_id,
+        job_id: app.job_id,
+        start_time: new Date().toISOString(),
+        status: "ongoing",
+      });
+
+      if (insertShiftErr) {
+        console.error("startShift: insert shift log error", insertShiftErr);
+        // Attempt rollback: remove credit to worker and restore contractor balance
+        try {
+          // try to decrement worker wallet (best-effort) by calling increment_wallet with negative amount
+          // If your RPC doesn't accept negative, this may fail; still attempt restore via wallets table
+          await supabase.rpc("increment_wallet", {
+            worker_id: app.worker_id,
+            amount: -amountToDeduct,
+          });
+        } catch (e) {
+          console.warn("rollback: decrement worker via RPC failed", e);
+        }
+        try {
+          await supabase.from("wallets").update({ balance: contractorBalance }).eq("user_id", app.contractor_id);
+        } catch (e) {
+          console.warn("rollback: restore contractor wallet failed", e);
+        }
+        alert("❌ शिफ्ट रिकॉर्ड बनाने में समस्या — ट्रांज़ैक्शन रिवर्ट की कोशिश की जा रही है");
+        return;
+      }
+
+      alert(`✅ शिफ्ट शुरू कर दी गई — ₹${amountToDeduct} contractor के वॉलेट से काटा गया और worker के वॉलेट में डाला गया`);
+      fetchContractorData(app.contractor_id);
+    } catch (err) {
+      console.error("startShift unexpected", err);
+      alert("❌ शिफ्ट शुरू करने में समस्या");
     }
-    alert("✅ शिफ्ट शुरू हो गई");
-    fetchContractorData(app.contractor_id);
   };
 
   // Worker → End Shift (contractor side helper)
@@ -590,13 +703,22 @@ export default function HomePage() {
       {profile.role === "contractor" && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
-            <div className="flex gap-2 items-center">
-              <div className="text-sm mr-2">वॉलेट: <span className="font-bold">₹{wallet}</span></div>
-              <button onClick={addFunds} className="bg-green-700 text-white py-2 px-3 rounded-lg">Add +</button>
-              <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
-            </div>
-          </div>
+  <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
+  <div className="flex gap-2 items-center">
+    <div className="text-sm mr-2">वॉलेट: <span className="font-bold">₹{wallet}</span></div>
+    <button onClick={addFunds} className="bg-green-700 text-white py-2 px-3 rounded-lg">Add +</button>
+    <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
+
+    {/* NEW: See Workers button */}
+    <button
+      onClick={() => router.push("/workers")}
+      className="bg-yellow-400 text-white py-2 px-3 rounded-lg"
+    >
+      Workers देखें 👥
+    </button>
+  </div>
+</div>
+
 
           {applications.length === 0 ? (
             <div className="p-6 border rounded-xl text-center opacity-80">अभी कोई आवेदन नहीं आया ❌</div>
@@ -670,7 +792,7 @@ export default function HomePage() {
                               {/* show pay button only if shiftstatus is completed */}
                               {app.shiftstatus === "completed" && (
                                 <>
-                                  
+
                                   {!ratingsGiven[app.id] && (
                                     <button onClick={async () => {
                                       await rateWorker(app);

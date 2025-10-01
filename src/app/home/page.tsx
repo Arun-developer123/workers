@@ -45,6 +45,7 @@ interface ShiftLog {
 interface WorkerProfile {
   user_id: string;
   phone: string;
+  wage: number;
 }
 
 interface OtpRow {
@@ -279,7 +280,7 @@ export default function HomePage() {
         return;
       }
 
-      const baseWage = Number((workerProfile as any)?.wage || 0);
+      const baseWage = Number(workerProfile?.wage || 0);
       if (isNaN(baseWage) || baseWage <= 0) {
         alert("❌ Worker का valid wage नहीं मिला — शिफ्ट शुरू नहीं हो सकती");
         return;

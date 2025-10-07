@@ -190,7 +190,7 @@ export default function HomePage() {
 
       // 3) Fetch jobs separately to ensure we have job title/wage even if join not present
       const jobIds = Array.from(new Set(applicationsData.map((a) => a.job_id).filter(Boolean)));
-      let jobsDataById: { [key: string]: Job } = {};
+      const jobsDataById: { [key: string]: Job } = {};
       if (jobIds.length > 0) {
         const { data: jobsData, error: jobsErr } = await supabase
           .from("jobs")
@@ -219,16 +219,16 @@ export default function HomePage() {
       // 5) Merge applications with job (either from join or fetched), shift status and fallback wages
       const merged = applicationsData.map((a) => {
         // prefer joined job if available
-        const joinedJob = (a as any).jobs && Array.isArray((a as any).jobs) && (a as any).jobs[0] ? (a as any).jobs[0] : null;
+        const joinedJob = Array.isArray(a.jobs) && a.jobs[0] ? a.jobs[0] : undefined;
         const fetchedJob = jobsDataById[a.job_id];
         const job = (joinedJob || fetchedJob) as Job | undefined;
 
-        // if job.wage is missing, fallback to worker's profile wage
+        // if job.wage is missing, fallback to worker's profile wage (use local mapWage computed above)
         let resolvedWage: number | string | null = null;
         if (job && job.wage != null && String(job.wage).trim() !== "") {
           resolvedWage = job.wage;
         } else {
-          const wWage = workerWageMap[a.worker_id];
+          const wWage = mapWage[a.worker_id];
           if (wWage != null) resolvedWage = wWage;
         }
 

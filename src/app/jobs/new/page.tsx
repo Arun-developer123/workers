@@ -82,6 +82,32 @@ type Addon = {
   unitPrice: number;
 };
 
+// Strongly typed shape for job insert (avoid `any`)
+type JobInsert = {
+  contractor_id: string;
+  title: string;
+  location?: string | null;
+  wage?: string | null;
+  description?: string | null;
+  occupation: string;
+  pricing_basis: string;
+  size_numeric: number;
+  size_unit?: string | null;
+  worker_count_estimate?: number | null;
+  estimated_labor?: number | null;
+  addons_total?: number | null;
+  travel_charge?: number | null;
+  urgent_surcharge?: number | null;
+  service_fee?: number | null;
+  total_cost?: number | null;
+  rounded_cost?: number | null;
+  extras?: {
+    addons: Addon[];
+    travel_km: number;
+    urgent: boolean;
+  } | null;
+};
+
 export default function NewJobPage() {
   // -------------------------
   // state (all declared at top-level)
@@ -141,35 +167,39 @@ export default function NewJobPage() {
         try {
           const stored = localStorage.getItem("fake_user_profile");
           if (stored) {
-            const parsed = JSON.parse(stored);
-            console.debug("NewJobPage: using fake_user_profile", parsed);
+            const parsedRaw: unknown = JSON.parse(stored);
+            console.debug("NewJobPage: using fake_user_profile", parsedRaw);
 
-            const roleCandidateFromFake = parsed?.role ?? null;
-            if (!isContractorRole(roleCandidateFromFake)) {
-              if (!alertedOnce) {
-                alert("❌ सिर्फ ठेकेदार नया काम डाल सकते हैं");
-                setAlertedOnce(true);
+            if (parsedRaw && typeof parsedRaw === "object") {
+              const parsed = parsedRaw as Record<string, unknown>;
+              const roleCandidateFromFake = typeof parsed.role === "string" ? parsed.role : null;
+              if (!isContractorRole(roleCandidateFromFake)) {
+                if (!alertedOnce) {
+                  alert("❌ सिर्फ ठेकेदार नया काम डाल सकते हैं");
+                  setAlertedOnce(true);
+                }
+                setIsContractor(false);
+                setRoleChecked(true);
+                router.push("/home");
+                return;
               }
-              setIsContractor(false);
+
+              // accept fake profile as contractor (use parsed.user_id if available)
+              const userId = typeof parsed.user_id === "string" ? parsed.user_id : null;
+              setContractorId(userId ?? null);
+              setIsContractor(true);
               setRoleChecked(true);
-              router.push("/home");
-              return;
-            }
 
-            // accept fake profile as contractor (use parsed.user_id if available)
-            setContractorId(parsed?.user_id ?? null);
-            setIsContractor(true);
-            setRoleChecked(true);
-
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                  setLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-                },
-                () => setLocation("")
-              );
+              if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                  (pos) => {
+                    setLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
+                  },
+                  () => setLocation("")
+                );
+              }
+              return; // done — we used fake profile
             }
-            return; // done — we used fake profile
           }
         } catch (e) {
           console.warn("NewJobPage: failed to parse/use fake_user_profile", e);
@@ -200,12 +230,18 @@ export default function NewJobPage() {
 
         let roleCandidate: string | null = dbProfile?.role ?? null;
 
-        // 3) fallback: user_metadata.role
+        // 3) fallback: user_metadata.role (avoid `any`)
         if (!roleCandidate) {
           try {
-            const metaRole = (user?.user_metadata as any)?.role;
-            if (metaRole) roleCandidate = String(metaRole);
-            console.debug("NewJobPage: role from user_metadata", metaRole);
+            const meta: unknown = user?.user_metadata;
+            if (meta && typeof meta === "object") {
+              const metaRec = meta as Record<string, unknown>;
+              const mr = metaRec["role"];
+              if (typeof mr === "string") {
+                roleCandidate = mr;
+                console.debug("NewJobPage: role from user_metadata", mr);
+              }
+            }
           } catch (e) {
             // ignore
           }
@@ -216,9 +252,13 @@ export default function NewJobPage() {
           try {
             const stored = localStorage.getItem("fake_user_profile");
             if (stored) {
-              const parsed = JSON.parse(stored);
-              roleCandidate = parsed?.role ?? null;
-              console.debug("NewJobPage: role from fake_user_profile (fallback)", roleCandidate);
+              const parsedRaw: unknown = JSON.parse(stored);
+              if (parsedRaw && typeof parsedRaw === "object") {
+                const parsed = parsedRaw as Record<string, unknown>;
+                const rc = typeof parsed.role === "string" ? parsed.role : null;
+                roleCandidate = rc;
+                console.debug("NewJobPage: role from fake_user_profile (fallback)", roleCandidate);
+              }
             }
           } catch (e) {
             console.warn("NewJobPage: failed to parse fake_user_profile", e);
@@ -304,11 +344,17 @@ export default function NewJobPage() {
           return;
         }
 
-        const workers = (data || []).map((r: any) => ({
-          user_id: r.user_id,
-          name: r.name ?? r.user_id.slice(0, 6),
-          rate: r.rate !== null ? Number(r.rate) : null,
-        }));
+        const rows = (data ?? []) as unknown[];
+        const workers: WorkerEntry[] = rows.map((r) => {
+          const row = r as Record<string, unknown>;
+          const user_id = typeof row.user_id === "string" ? row.user_id : String(row.user_id ?? "");
+          const name = typeof row.name === "string" ? row.name : user_id.slice(0, 6);
+          let rate: number | null = null;
+          if (typeof row.rate === "number") rate = row.rate as number;
+          else if (typeof row.rate === "string" && !isNaN(Number(row.rate))) rate = Number(row.rate);
+
+          return { user_id, name, rate };
+        });
         setWorkersForOccupation(workers);
         setSelectedWorkerId(workers.length ? "avg" : "");
         setEstimates(null);
@@ -485,7 +531,7 @@ export default function NewJobPage() {
 
     const finalRounded = estimates.rounded50 ?? estimates.rounded100 ?? estimates.withFee ?? estimates.subtotal ?? 0;
 
-    const insertObj: any = {
+    const insertObj: JobInsert = {
       contractor_id: contractorId,
       title: title.trim(),
       location: location.trim() || null,
@@ -503,7 +549,6 @@ export default function NewJobPage() {
       service_fee: estimates.serviceFee ?? null,
       total_cost: estimates.withFee ?? null,
       rounded_cost: finalRounded ?? null,
-      // extras: keep full breakdown in a JSON blob so frontend/backend can use it later
       extras: {
         addons,
         travel_km: Number(travelKm) || 0,

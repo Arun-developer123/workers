@@ -11,13 +11,14 @@ interface Profile {
   name: string;
   role: "worker" | "contractor";
   phone?: string;
+  wage?: string | number | null;
 }
 
 interface Job {
   id: string;
   title: string;
   location: string; // can be address or "lat,lng"
-  wage: number | string;
+  wage: number | string | null;
   contractor_id: string;
   created_at?: string;
   description?: string;
@@ -29,7 +30,7 @@ interface Application {
   contractor_id: string;
   job_id: string;
   status: "pending" | "accepted" | "rejected";
-  jobs?: Job[]; // jobs array from join
+  jobs?: Job[]; // jobs array from join or fetched separately
   shiftstatus?: string | null;
 }
 
@@ -44,8 +45,8 @@ interface ShiftLog {
 
 interface WorkerProfile {
   user_id: string;
-  phone: string;
-  wage: number;
+  phone?: string;
+  wage?: string | number | null;
 }
 
 interface OtpRow {
@@ -65,6 +66,7 @@ export default function HomePage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [workersMap, setWorkersMap] = useState<{ [key: string]: string }>({});
+  const [workerWageMap, setWorkerWageMap] = useState<{ [key: string]: number | null }>({});
   const [wallet, setWallet] = useState<number>(0);
   const [ratingsGiven, setRatingsGiven] = useState<{ [key: string]: boolean }>({});
   const [myRating, setMyRating] = useState<number | null>(null);
@@ -113,7 +115,6 @@ export default function HomePage() {
       setJobs([]);
     }
   };
-  
 
   // Contractor → fetch jobs posted by contractor
   const fetchJobsForContractor = async (userId: string) => {
@@ -138,9 +139,10 @@ export default function HomePage() {
   // Contractor → Applications + join shift_logs + pending OTPs
   const fetchContractorData = async (userId: string) => {
     try {
+      // 1) Fetch applications (try to get joined job via RPC select; but if not present, we'll fetch jobs separately)
       const { data: apps, error } = await supabase
         .from("applications")
-        // include job description as well
+        // attempt to include job fields if foreign key relationship present in Supabase
         .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage, contractor_id, description)")
         .eq("contractor_id", userId)
         .order("created_at", { ascending: false });
@@ -158,25 +160,53 @@ export default function HomePage() {
 
       const applicationsData = apps as Application[];
 
-      // Worker phones
+      // 2) Worker phones and wages: fetch profiles for workers referenced in applications
       const workerIds = Array.from(new Set(applicationsData.map((a) => a.worker_id)));
+      const mapPhone: { [key: string]: string } = {};
+      const mapWage: { [key: string]: number | null } = {};
       if (workerIds.length > 0) {
-        const { data: workersData } = await supabase
+        const { data: workersData, error: workersErr } = await supabase
           .from("profiles")
-          .select("user_id, phone")
+          .select("user_id, phone, wage")
           .in("user_id", workerIds);
 
-        const map: { [key: string]: string } = {};
+        if (workersErr) {
+          console.error("fetch worker profiles error", workersErr);
+        }
+
         ((workersData as WorkerProfile[]) || []).forEach((w) => {
-          map[w.user_id] = w.phone;
+          if (w.user_id) mapPhone[w.user_id] = w.phone || "";
+          // normalize wage to number if possible
+          const wnum = w?.wage != null ? Number(w.wage) : null;
+          mapWage[w.user_id] = isNaN(wnum as number) ? null : (wnum as number);
         });
-        setWorkersMap(map);
+
+        setWorkersMap(mapPhone);
+        setWorkerWageMap(mapWage);
       } else {
         setWorkersMap({});
+        setWorkerWageMap({});
       }
 
-      // Fetch shift_logs
-      const jobIds = applicationsData.map((a) => a.job_id).filter(Boolean);
+      // 3) Fetch jobs separately to ensure we have job title/wage even if join not present
+      const jobIds = Array.from(new Set(applicationsData.map((a) => a.job_id).filter(Boolean)));
+      let jobsDataById: { [key: string]: Job } = {};
+      if (jobIds.length > 0) {
+        const { data: jobsData, error: jobsErr } = await supabase
+          .from("jobs")
+          .select("*")
+          .in("id", jobIds);
+
+        if (jobsErr) {
+          console.error("fetch jobs by ids error", jobsErr);
+        } else {
+          ((jobsData as Job[]) || []).forEach((j) => {
+            jobsDataById[j.id] = j;
+          });
+        }
+      }
+
+      // 4) Fetch shift_logs
       let shifts: ShiftLog[] | null = null;
       if (jobIds.length > 0) {
         const { data: shiftsData } = await supabase
@@ -186,16 +216,38 @@ export default function HomePage() {
         shifts = shiftsData as ShiftLog[] | null;
       }
 
+      // 5) Merge applications with job (either from join or fetched), shift status and fallback wages
       const merged = applicationsData.map((a) => {
+        // prefer joined job if available
+        const joinedJob = (a as any).jobs && Array.isArray((a as any).jobs) && (a as any).jobs[0] ? (a as any).jobs[0] : null;
+        const fetchedJob = jobsDataById[a.job_id];
+        const job = (joinedJob || fetchedJob) as Job | undefined;
+
+        // if job.wage is missing, fallback to worker's profile wage
+        let resolvedWage: number | string | null = null;
+        if (job && job.wage != null && String(job.wage).trim() !== "") {
+          resolvedWage = job.wage;
+        } else {
+          const wWage = workerWageMap[a.worker_id];
+          if (wWage != null) resolvedWage = wWage;
+        }
+
         const shift = (shifts || [])?.find(
           (s) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
         );
-        return { ...a, shiftstatus: shift?.status || null };
+
+        const finalApp: Application = {
+          ...a,
+          jobs: job ? [{ ...job, wage: resolvedWage }] : [],
+          shiftstatus: shift?.status || null,
+        };
+
+        return finalApp;
       });
 
       setApplications(merged);
 
-      // Fetch pending OTPs for this contractor (unused and not expired)
+      // 6) Fetch pending OTPs for this contractor (unused and not expired)
       const nowIso = new Date().toISOString();
       const { data: otpsData, error: otpsErr } = await supabase
         .from("shift_otps")
@@ -259,16 +311,14 @@ export default function HomePage() {
   };
 
   // Worker → Start Shift
-  // Now: when starting shift, deduct contractor wallet by worker's profile wage (10% markup + round up to 50)
   const startShift = async (app: Application) => {
     try {
-      // 0) basic checks
       if (!app || !app.worker_id || !app.contractor_id) {
         alert("❌ Invalid application details");
         return;
       }
 
-      // 1) fetch worker's profile wage from profiles table
+      // 1) fetch worker's profile wage from profiles table (ensure numeric)
       const { data: workerProfile, error: wpErr } = await supabase
         .from("profiles")
         .select("wage")
@@ -287,7 +337,6 @@ export default function HomePage() {
         return;
       }
 
-      // 2) compute amount to deduct (10% markup + round up to 50)
       const amountToDeduct = computeDisplayedWage(baseWage);
       if (!amountToDeduct || amountToDeduct <= 0) {
         alert("❌ गणना में समस्या — शिफ्ट शुरू नहीं हो सकती");
@@ -351,10 +400,7 @@ export default function HomePage() {
 
       if (insertShiftErr) {
         console.error("startShift: insert shift log error", insertShiftErr);
-        // Attempt rollback: remove credit to worker and restore contractor balance
         try {
-          // try to decrement worker wallet (best-effort) by calling increment_wallet with negative amount
-          // If your RPC doesn't accept negative, this may fail; still attempt restore via wallets table
           await supabase.rpc("increment_wallet", {
             worker_id: app.worker_id,
             amount: -amountToDeduct,
@@ -415,7 +461,13 @@ export default function HomePage() {
         return;
       }
 
-      const wageNum = Number(jobRow.wage);
+      // if job wage missing, fallback to worker's profile wage
+      let wageNum = Number(jobRow.wage);
+      if (isNaN(wageNum) || wageNum <= 0) {
+        const { data: wp } = await supabase.from("profiles").select("wage").eq("user_id", app.worker_id).single();
+        wageNum = Number(wp?.wage || 0);
+      }
+
       if (isNaN(wageNum) || wageNum <= 0) {
         alert("❌ इस जॉब का valid wage नहीं मिला");
         return;
@@ -510,7 +562,6 @@ export default function HomePage() {
     else {
       alert("✅ Rating save हो गई");
       setRatingsGiven({ ...ratingsGiven, [app.id]: true });
-      // if app was already paid earlier, mark completed
       setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || true }));
     }
   };
@@ -577,7 +628,6 @@ export default function HomePage() {
     }
 
     try {
-      // upsert row in wallets table (increment)
       const { data: existing } = await supabase.from("wallets").select("balance").eq("user_id", profile?.user_id).single();
       const current = Number(existing?.balance || 0);
       const newBal = current + amount;
@@ -705,21 +755,21 @@ export default function HomePage() {
       {profile.role === "contractor" && (
         <div>
           <div className="flex items-center justify-between mb-4">
-  <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
-  <div className="flex gap-2 items-center">
-    <div className="text-sm mr-2">वॉलेट: <span className="font-bold">₹{wallet}</span></div>
-    <button onClick={addFunds} className="bg-green-700 text-white py-2 px-3 rounded-lg">Add +</button>
-    <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
+            <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
+            <div className="flex gap-2 items-center">
+              <div className="text-sm mr-2">वॉलेट: <span className="font-bold">₹{wallet}</span></div>
+              <button onClick={addFunds} className="bg-green-700 text-white py-2 px-3 rounded-lg">Add +</button>
+              <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
 
-    {/* NEW: See Workers button */}
-    <button
-      onClick={() => router.push("/workers")}
-      className="bg-yellow-400 text-white py-2 px-3 rounded-lg"
-    >
-      Workers देखें 👥
-    </button>
-  </div>
-</div>
+              {/* NEW: See Workers button */}
+              <button
+                onClick={() => router.push("/workers")}
+                className="bg-yellow-400 text-white py-2 px-3 rounded-lg"
+              >
+                Workers देखें 👥
+              </button>
+            </div>
+          </div>
 
 
           {applications.length === 0 ? (
@@ -728,13 +778,21 @@ export default function HomePage() {
             <div className="space-y-4">
               {applications.map((app) => {
                 const workerPhone = workersMap[app.worker_id] || null;
+                const jobObj = app.jobs && app.jobs[0] ? app.jobs[0] : undefined;
+
+                // isCompleted: both paid & rated (local heuristic)
                 const isCompleted = !!completedApps[app.id] && !!ratingsGiven[app.id];
 
                 // Show green border until both pay & rating are done
                 const shouldHighlightGreen = !isCompleted && (app.status === "pending" || app.status === "accepted");
 
-                // safe wage display
-                const wageDisplay = app.jobs?.[0]?.wage ?? "—";
+                // safe wage display: prefer job's wage, then worker profile wage, else —
+                let wageDisplayRaw: number | string | null | undefined = jobObj?.wage;
+                if ((wageDisplayRaw == null || wageDisplayRaw === "" || Number(wageDisplayRaw) === 0) && workerWageMap[app.worker_id] != null) {
+                  wageDisplayRaw = workerWageMap[app.worker_id] as number;
+                }
+
+                const wageDisplay = wageDisplayRaw != null && wageDisplayRaw !== "" ? wageDisplayRaw : "—";
 
                 // Pending OTPs for this application (if any)
                 const otpsForApp = pendingOtpsMap[app.id] || [];
@@ -746,7 +804,7 @@ export default function HomePage() {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="text-lg font-bold">{app.jobs?.[0]?.title ?? "Job" } <span className="text-sm opacity-70">({app.jobs?.[0]?.location ?? "—"})</span></div>
+                        <div className="text-lg font-bold">{jobObj?.title ?? "(Job name unavailable)"} <span className="text-sm opacity-70">({jobObj?.location ?? "—"})</span></div>
                         <div className="text-sm opacity-70 mt-1">स्थिति: <span className={`font-semibold ${app.status === 'pending' ? 'text-yellow-600' : app.status === 'accepted' ? 'text-green-600' : 'text-red-600'}`}>{app.status}</span></div>
                         <div className="text-sm opacity-60 mt-1">शिफ्ट: <span className="font-medium">{app.shiftstatus || '—'}</span></div>
                         <div className="text-sm opacity-60 mt-1">वेज: <span className="font-medium">₹{wageDisplay}</span></div>

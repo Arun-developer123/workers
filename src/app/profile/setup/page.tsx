@@ -99,6 +99,23 @@ const EXPERIENCE_LEVELS = [
   { value: "5+", label: "5+ वर्ष" },
 ];
 
+// Upsert shape for the `profiles` table (narrowly typed to avoid `any`)
+type UpsertProfile = {
+  user_id: string;
+  role: Role | null;
+  name: string;
+  location?: string | null;
+  phone?: string | null;
+  occupation?: string | null;
+  pricing_basis?: string | null;
+  experience_level?: string | null;
+  rate?: number | null;
+  rate_unit?: string | null;
+  skill?: string | null;
+  wage?: string | null;
+  availability?: string | null;
+};
+
 export default function ProfileSetupPage() {
   const [role, setRole] = useState<Role>(null);
   const [name, setName] = useState("");
@@ -196,13 +213,13 @@ export default function ProfileSetupPage() {
       return;
     }
 
-    // Map to DB fields
-    const upsertObj: any = {
+    // Map to DB fields — strongly typed to avoid `any`
+    const upsertObj: UpsertProfile = {
       user_id: user.id,
       role,
       name,
       location,
-      phone: (user?.phone as string) ?? user?.user_metadata?.phone ?? null,
+      phone: (user?.phone as string) ?? (user?.user_metadata?.phone as string) ?? null,
     };
 
     if (role === "worker") {
@@ -215,9 +232,15 @@ export default function ProfileSetupPage() {
       upsertObj.wage = wage || String(rate || ""); // keep wage for backward compatibility
       upsertObj.availability = "available";
     } else {
-      // contractor specific fields (optional)
+      // contractor specific fields (optional) — explicitly set to null to avoid stale values
+      upsertObj.occupation = null;
+      upsertObj.pricing_basis = null;
+      upsertObj.experience_level = null;
+      upsertObj.rate = null;
+      upsertObj.rate_unit = null;
       upsertObj.skill = null;
       upsertObj.wage = null;
+      upsertObj.availability = null;
     }
 
     const { error } = await supabase.from("profiles").upsert(upsertObj);

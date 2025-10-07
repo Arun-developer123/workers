@@ -113,6 +113,7 @@ export default function HomePage() {
       setJobs([]);
     }
   };
+  
 
   // Contractor → fetch jobs posted by contractor
   const fetchJobsForContractor = async (userId: string) => {

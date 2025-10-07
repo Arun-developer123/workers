@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.2.0",
+    "@simplewebauthn/server": "^13.2.1",
     "@supabase/supabase-js": "^2.57.4",
     "framer-motion": "^12.23.19",
     "lucide-react": "^0.544.0",

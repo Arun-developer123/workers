@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import AudioButton from "@/components/AudioButton";
@@ -89,7 +89,6 @@ const OCCUPATIONS: OccupationOption[] = [
       { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
     ],
   },
-  // आप और occupations यहाँ add कर सकते हैं
 ];
 
 const EXPERIENCE_LEVELS = [
@@ -114,6 +113,7 @@ type UpsertProfile = {
   skill?: string | null;
   wage?: string | null;
   availability?: string | null;
+  profile_image_url?: string | null; // new column to store public URL
 };
 
 export default function ProfileSetupPage() {
@@ -133,6 +133,11 @@ export default function ProfileSetupPage() {
   const [experience, setExperience] = useState<string>("");
   const [rate, setRate] = useState<string>(""); // structured numeric rate
   const [rateUnit, setRateUnit] = useState<string>("");
+
+  // Image states
+  const [profileImageFile, setProfileImageFile] = useState<File | null>(null);
+  const [profileImagePreview, setProfileImagePreview] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Location auto fetch
   useEffect(() => {
@@ -174,6 +179,19 @@ export default function ProfileSetupPage() {
     setRateUnit(found?.unitHint ?? "");
   }, [pricingBasis, pricingOptions]);
 
+  // handle file selection (camera or file picker)
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    if (!f) return;
+    setProfileImageFile(f);
+    setProfileImagePreview(URL.createObjectURL(f));
+  };
+
+  const openCamera = () => {
+    // trigger hidden file input with capture attribute
+    fileInputRef.current?.click();
+  };
+
   const validateAndPrepare = () => {
     if (!role) {
       alert("कृपया भूमिका चुनें (मज़दूर या ठेकेदार)");
@@ -213,14 +231,76 @@ export default function ProfileSetupPage() {
       return;
     }
 
-    // Map to DB fields — strongly typed to avoid `any`
-    const upsertObj: UpsertProfile = {
+    // --- Ensure we don't overwrite phone saved during signup ---
+    // Fetch existing profile row (if any) to preserve phone inserted at signup
+    let existingProfile: { phone?: string | null; profile_image_url?: string | null } | null = null;
+    try {
+      const { data: rows, error: fetchError } = await supabase
+        .from("profiles")
+        .select("phone, profile_image_url")
+        .eq("user_id", user.id)
+        .limit(1);
+
+      if (!fetchError && Array.isArray(rows) && rows.length > 0) {
+        existingProfile = (rows as any[])[0];
+      }
+    } catch (e) {
+      console.warn("Could not fetch existing profile (non-fatal):", e);
+    }
+
+    // Decide phone to save:
+    // - Prefer the phone already present in profiles (signup value)
+    // - Fallback to auth user phone or user_metadata phone if profile missing
+    const phoneToSave =
+      existingProfile?.phone ??
+      (user?.phone as string) ??
+      (user?.user_metadata?.phone as string) ??
+      null;
+
+    let publicImageUrl: string | null = null;
+
+    // If user selected image, upload to Supabase Storage
+    if (profileImageFile) {
+      try {
+        // Choose a bucket name (create this bucket in your Supabase dashboard): 'profile-images'
+        const bucket = "profile-images";
+        const fileExt = profileImageFile.name.split(".").pop() ?? "jpg";
+        const filePath = `profiles/${user.id}/profile_${Date.now()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from(bucket)
+          .upload(filePath, profileImageFile, { upsert: true });
+
+        if (uploadError) {
+          console.error("Storage upload error:", uploadError);
+          alert("प्रोफ़ाइल इमेज अपलोड करने में समस्या हुई");
+        } else {
+          // get public URL (note: configure bucket to be public or use signed URLs)
+          const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+          publicImageUrl = (urlData as any)?.publicUrl ?? null;
+        }
+      } catch (err) {
+        console.error("Upload exception:", err);
+        alert("इमेज अपलोड करते समय त्रुटि हुई");
+      }
+    }
+
+    // Build upsert object carefully to AVOID overwriting existing phone or image accidentally
+    const upsertObj: Partial<UpsertProfile> = {
       user_id: user.id,
       role,
       name,
       location,
-      phone: (user?.phone as string) ?? (user?.user_metadata?.phone as string) ?? null,
+      // Preserve the signup phone if it exists; otherwise take auth user phone
+      phone: phoneToSave,
     };
+
+    // Add profile image only if we uploaded a new one; otherwise preserve existing
+    if (publicImageUrl) {
+      upsertObj.profile_image_url = publicImageUrl;
+    } else if (existingProfile?.profile_image_url) {
+      upsertObj.profile_image_url = existingProfile.profile_image_url;
+    }
 
     if (role === "worker") {
       upsertObj.occupation = occupation || null;
@@ -243,13 +323,17 @@ export default function ProfileSetupPage() {
       upsertObj.availability = null;
     }
 
-    const { error } = await supabase.from("profiles").upsert(upsertObj);
+    // Use onConflict so we update existing row instead of inserting duplicate
+    const { error } = await supabase
+      .from("profiles")
+      .upsert([upsertObj], { onConflict: "user_id" });
 
     if (error) {
       console.error("Supabase upsert error:", error);
       alert("प्रोफ़ाइल सेव करने में समस्या ❌");
     } else {
-      router.push("/home");
+      // <-- Redirect changed here to sign-in page as requested -->
+      router.push("/auth/sign-in");
     }
   };
 
@@ -279,6 +363,36 @@ export default function ProfileSetupPage() {
         >
           ठेकेदार
         </button>
+      </div>
+
+      {/* Upload image button (visible for both roles) */}
+      <div>
+        <label className="text-lg flex items-center gap-2">प्रोफ़ाइल फोटो</label>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={openCamera}
+            className="py-2 px-4 bg-indigo-600 text-white rounded-lg shadow"
+          >
+            Upload Image / Camera
+          </button>
+
+          {/* Preview */}
+          {profileImagePreview ? (
+            <img src={profileImagePreview} alt="preview" className="w-20 h-20 rounded-full object-cover" />
+          ) : (
+            <div className="w-20 h-20 rounded-full bg-gray-200 flex items-center justify-center">No image</div>
+          )}
+        </div>
+
+        {/* hidden file input: capture attribute hints mobile to open camera */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={onFileChange}
+          className="hidden"
+        />
       </div>
 
       {/* Name */}
@@ -415,3 +529,11 @@ export default function ProfileSetupPage() {
     </div>
   );
 }
+
+/*
+  Database changes to run (example):
+
+  -- Add a column to store the public URL of the uploaded profile image
+  ALTER TABLE public.profiles
+    ADD COLUMN profile_image_url text NULL;
+*/

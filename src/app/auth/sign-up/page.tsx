@@ -13,12 +13,23 @@ export default function SignUpPage() {
   const [name, setName] = useState("");
   const router = useRouter();
 
+  // Simple phone validation (keeps it light; change regex if you need stricter rules)
+  const isValidPhone = (p: string) => {
+    const cleaned = p.replace(/[^0-9+]/g, "");
+    // require at least 10 digits (India typical) and optionally a leading +country
+    const digits = cleaned.replace(/[^0-9]/g, "");
+    return digits.length >= 10;
+  };
+
   // Step 1: Generate local OTP
   const sendOtp = () => {
-    if (!phone) return alert("मोबाइल नंबर डालें ❌");
+    const trimmed = phone.trim();
+    if (!trimmed) return alert("मोबाइल नंबर डालें ❌");
+    if (!isValidPhone(trimmed)) return alert("कृपया मान्य मोबाइल नंबर डालें (कम से कम 10 अंकों) ❌");
 
     const otpNum = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedOtp(otpNum);
+    // For now we show OTP via alert (local flow). Replace with real SMS provider in production.
     alert(`आपका OTP है: ${otpNum}`);
     setStep("otp");
   };
@@ -28,9 +39,8 @@ export default function SignUpPage() {
     if (otp !== generatedOtp) return alert("गलत OTP ❌");
 
     try {
-      // Generate random email for Supabase signup
       const randomEmail = `user_${Date.now()}@example.com`;
-      const randomPassword = crypto.randomUUID(); // temporary random password
+      const randomPassword = crypto.randomUUID();
 
       // Sign up user in Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -39,22 +49,30 @@ export default function SignUpPage() {
       });
 
       if (authError) return alert("Auth failed ❌: " + authError.message);
-      if (!authData.user) return alert("User create नहीं हुआ ❌");
 
-      const userId = authData.user.id;
+      const user = authData?.user ?? null;
+      if (!user) {
+        // In some Supabase configs the user object may be null until email confirmation.
+        // Notify the user and still attempt to continue if an id is present in the response.
+        return alert("User creation pending — please check your email to confirm signup.");
+      }
 
-      // Insert profile including phone number
-      const { error: profileError } = await supabase.from("profiles").insert([
-        {
-          user_id: userId,
-          role: "worker",
-          name: name || null,
-          phone: phone,
-          skill: null,
-          wage: null,
-          location: null,
-        },
-      ]);
+      const userId = user.id;
+
+      // Upsert profile so phone gets saved even if a row already exists for this user
+      const profilePayload = {
+        user_id: userId,
+        role: "worker",
+        name: name || null,
+        phone: phone.trim(),
+        skill: null,
+        wage: null,
+        location: null,
+      } as const;
+
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .upsert([profilePayload], { onConflict: "user_id" });
 
       if (profileError)
         return alert("Profile create नहीं हुई ❌: " + profileError.message);

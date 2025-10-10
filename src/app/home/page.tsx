@@ -12,6 +12,7 @@ interface Profile {
   role: "worker" | "contractor";
   phone?: string;
   wage?: string | number | null;
+  profile_image_url?: string | null; // optional, may be present in DB
 }
 
 interface Job {
@@ -63,6 +64,7 @@ interface OtpRow {
 
 export default function HomePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null); // NEW: profile image URL
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [workersMap, setWorkersMap] = useState<{ [key: string]: string }>({});
@@ -84,6 +86,11 @@ export default function HomePage() {
     const parsedProfile: Profile = JSON.parse(storedProfile);
     setProfile(parsedProfile);
 
+    // fetch profile image from DB (if available) — non-destructive, doesn't change other logic
+    fetchProfileImage(parsedProfile.user_id).catch((e) => {
+      console.warn("fetchProfileImage failed", e);
+    });
+
     // fetch common data for both roles
     fetchWallet(parsedProfile.user_id);
     fetchMyRating(parsedProfile.user_id);
@@ -96,6 +103,31 @@ export default function HomePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // NEW: fetch profile image URL (tries profile_image_url column; if absent but path stored use storage.getPublicUrl)
+  const fetchProfileImage = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("profile_image_url")
+        .eq("user_id", userId)
+        .single();
+      if (error) {
+        // non-fatal
+        // console.warn("fetchProfileImage select error", error);
+        return;
+      }
+      const img = (data as any)?.profile_image_url ?? null;
+      if (img) {
+        setProfileImageUrl(img);
+      } else {
+        // nothing saved or different column used — do nothing
+        setProfileImageUrl(null);
+      }
+    } catch (err) {
+      console.warn("fetchProfileImage unexpected", err);
+    }
+  };
 
   // Worker → Available Jobs (all jobs)
   const fetchJobs = async () => {
@@ -661,7 +693,18 @@ export default function HomePage() {
               <div className="text-xs opacity-90">Role</div>
               <div className="font-bold text-lg">{profile.role.toUpperCase()}</div>
             </div>
-            <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center font-semibold">{profile.name[0]}</div>
+            {/* Profile avatar: show image if available, otherwise fallback to initial */}
+            {profileImageUrl ? (
+              <img
+                src={profileImageUrl}
+                alt="profile"
+                className="w-14 h-14 rounded-full object-cover border-2 border-white"
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center font-semibold">
+                {profile.name ? profile.name[0] : "U"}
+              </div>
+            )}
           </div>
         </div>
       </div>

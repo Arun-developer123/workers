@@ -117,7 +117,9 @@ export default function HomePage() {
         // console.warn("fetchProfileImage select error", error);
         return;
       }
-      const img = (data as any)?.profile_image_url ?? null;
+      // avoid `any` cast by using a narrow type for the row
+      const profileRow = data as { profile_image_url?: string } | null;
+      const img = profileRow?.profile_image_url ?? null;
       if (img) {
         setProfileImageUrl(img);
       } else {

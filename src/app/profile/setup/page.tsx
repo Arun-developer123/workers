@@ -116,6 +116,12 @@ type UpsertProfile = {
   profile_image_url?: string | null; // new column to store public URL
 };
 
+// Narrow type for existing profile row returned from select
+type ExistingProfileRow = {
+  phone?: string | null;
+  profile_image_url?: string | null;
+};
+
 export default function ProfileSetupPage() {
   const [role, setRole] = useState<Role>(null);
   const [name, setName] = useState("");
@@ -233,7 +239,7 @@ export default function ProfileSetupPage() {
 
     // --- Ensure we don't overwrite phone saved during signup ---
     // Fetch existing profile row (if any) to preserve phone inserted at signup
-    let existingProfile: { phone?: string | null; profile_image_url?: string | null } | null = null;
+    let existingProfile: ExistingProfileRow | null = null;
     try {
       const { data: rows, error: fetchError } = await supabase
         .from("profiles")
@@ -242,7 +248,8 @@ export default function ProfileSetupPage() {
         .limit(1);
 
       if (!fetchError && Array.isArray(rows) && rows.length > 0) {
-        existingProfile = (rows as any[])[0];
+        // safe typed access
+        existingProfile = rows[0] as ExistingProfileRow;
       }
     } catch (e) {
       console.warn("Could not fetch existing profile (non-fatal):", e);
@@ -253,8 +260,8 @@ export default function ProfileSetupPage() {
     // - Fallback to auth user phone or user_metadata phone if profile missing
     const phoneToSave =
       existingProfile?.phone ??
-      (user?.phone as string) ??
-      (user?.user_metadata?.phone as string) ??
+      (user?.phone as string | undefined) ??
+      (user?.user_metadata?.phone as string | undefined) ??
       null;
 
     let publicImageUrl: string | null = null;
@@ -277,7 +284,9 @@ export default function ProfileSetupPage() {
         } else {
           // get public URL (note: configure bucket to be public or use signed URLs)
           const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
-          publicImageUrl = (urlData as any)?.publicUrl ?? null;
+          // narrow typing for returned object
+          const typedUrlData = urlData as { publicUrl?: string } | null;
+          publicImageUrl = typedUrlData?.publicUrl ?? null;
         }
       } catch (err) {
         console.error("Upload exception:", err);
@@ -309,7 +318,7 @@ export default function ProfileSetupPage() {
       upsertObj.rate = rate ? parseFloat(rate) : null;
       upsertObj.rate_unit = rateUnit || null;
       upsertObj.skill = skill || null;
-      upsertObj.wage = wage || String(rate || ""); // keep wage for backward compatibility
+      upsertObj.wage = wage || String(rate || "");
       upsertObj.availability = "available";
     } else {
       // contractor specific fields (optional) — explicitly set to null to avoid stale values

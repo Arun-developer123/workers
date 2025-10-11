@@ -591,7 +591,7 @@ export default function NewJobPage() {
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="उदा: दीवार पेंटिंग / टाइल बिछाने" className="border p-3 rounded text-lg" />
 
       <label className="text-lg flex items-center gap-2">
-        Occupation / किस काम के लिए (जरूरी)
+        Occupation / कौन चाहिए (जरूरी)
         <AudioButton text="काम चुनें" />
       </label>
       <select value={occupation} onChange={(e) => setOccupation(e.target.value)} className="border p-3 rounded text-lg">
@@ -627,11 +627,11 @@ export default function NewJobPage() {
             const v = e.target.value;
             if (/^[0-9]*\.?[0-9]*$/.test(v) || v === "") setSizeNumeric(v);
           }}
-          placeholder="उदा: 100 (sqft) या 8 (hours)"
+          placeholder="उदा: 100 (sqft) या 1 (day)"
           className="border p-3 rounded text-lg flex-1"
           inputMode="decimal"
         />
-        <input value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} placeholder="इकाई (sqft / hour / day / piece / trip)" className="border p-3 rounded text-lg w-40" />
+        <input value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} placeholder="इकाई (sqft / day / hour / piece / trip)" className="border p-3 rounded text-lg w-40" />
       </div>
 
       <label className="text-lg flex items-center gap-2">

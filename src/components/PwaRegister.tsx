@@ -3,14 +3,22 @@
 
 import { useEffect, useState } from "react";
 
+/**
+ * Type for the beforeinstallprompt event (commonly not yet present in all lib.dom typings).
+ */
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform?: string }>;
+}
+
 export default function PwaRegister() {
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showInstall, setShowInstall] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // register service worker
+    // Register service worker (ignore errors)
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
         .register("/service-worker.js")
@@ -18,20 +26,25 @@ export default function PwaRegister() {
         .catch((e) => console.warn("SW registration failed", e));
     }
 
-    // beforeinstallprompt (Chrome/Android)
-    const onBeforeInstall = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
+    const onBeforeInstall = (e: Event) => {
+      const ev = e as BeforeInstallPromptEvent;
+      // prevent the automatic prompt
+      try {
+        ev.preventDefault();
+      } catch {
+        // some environments may not allow preventDefault on Event; ignore
+      }
+      setDeferredPrompt(ev);
       setShowInstall(true);
     };
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
 
-    // appinstalled
     const onAppInstalled = () => {
       console.log("PWA installed");
       setShowInstall(false);
       setDeferredPrompt(null);
     };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
     window.addEventListener("appinstalled", onAppInstalled);
 
     return () => {
@@ -42,18 +55,23 @@ export default function PwaRegister() {
 
   const install = async () => {
     if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const choice = await deferredPrompt.userChoice;
-    if (choice && choice.outcome === "accepted") {
-      console.log("User accepted the install prompt");
-    } else {
-      console.log("User dismissed the install prompt");
+    try {
+      await deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      if (choice && choice.outcome === "accepted") {
+        console.log("User accepted the install prompt");
+      } else {
+        console.log("User dismissed the install prompt");
+      }
+    } catch (err) {
+      console.warn("Install prompt failed:", err);
+    } finally {
+      setShowInstall(false);
+      setDeferredPrompt(null);
     }
-    setShowInstall(false);
-    setDeferredPrompt(null);
   };
 
-  const isIos = () => {
+  const isIos = (): boolean => {
     if (typeof window === "undefined") return false;
     return /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
   };

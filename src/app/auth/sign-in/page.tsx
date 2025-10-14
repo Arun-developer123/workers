@@ -5,11 +5,31 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
 
+type Profile = {
+  user_id: string;
+  role: string | null;
+  name: string | null;
+  skill: string | null;
+  wage: string | null;
+  location: string | null;
+  created_at: string | null;
+  phone: string | null;
+  occupation: string | null;
+  pricing_basis: string | null;
+  experience_level: string | null;
+  rate: number | null;
+  rate_unit: string | null;
+  availability: string | null;
+  profile_image_url: string | null;
+};
+
 export default function SignInPage() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [generatedOtp, setGeneratedOtp] = useState("");
-  const [step, setStep] = useState<"phone" | "otp">("phone");
+  const [step, setStep] = useState<"phone" | "otp" | "choose">("phone");
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   // Step 1: Generate local OTP
@@ -22,30 +42,78 @@ export default function SignInPage() {
     setStep("otp");
   };
 
-  // Step 2: Verify OTP and redirect according to role
+  // Helper: when a profile is chosen (or only one exists)
+  const finishLoginWithProfile = (profile: Profile) => {
+    // store profile in localStorage for fake login state (same key as before)
+    localStorage.setItem("fake_user_profile", JSON.stringify(profile));
+    alert("✅ लॉगिन सफल, आपका dashboard खुल रहा है");
+    // Redirect to home (kept same as original)
+    router.push("/home");
+  };
+
+  // Step 2: Verify OTP and fetch profiles for this phone
   const verifyOtp = async () => {
     if (otp !== generatedOtp) return alert("गलत OTP ❌");
 
+    setLoading(true);
     try {
-      // Fetch profile row from Supabase
-      const { data: userProfile, error } = await supabase
+      // Fetch all profiles with this phone (could be multiple)
+      const { data: userProfiles, error } = await supabase
         .from("profiles")
         .select("*")
-        .eq("phone", phone)
-        .single();
+        .eq("phone", phone);
 
-      if (error || !userProfile) {
+      if (error) {
+        console.error("Supabase error:", error);
+        setLoading(false);
+        return alert("User profiles नहीं मिले ❌, कृपया बाद में कोशिश करें।");
+      }
+
+      if (!userProfiles || userProfiles.length === 0) {
+        setLoading(false);
         return alert("User profile नहीं मिला ❌, कृपया पहले साइनअप करें।");
       }
 
-      // ✅ Success → store profile in localStorage for fake login state
-      localStorage.setItem("fake_user_profile", JSON.stringify(userProfile));
+      // If only one profile -> directly login
+      if (userProfiles.length === 1) {
+        finishLoginWithProfile(userProfiles[0] as Profile);
+        setLoading(false);
+        return;
+      }
 
-      alert("✅ लॉगिन सफल, आपका dashboard खुल रहा है");
+      // Multiple profiles: prefer showing profiles that share the same role
+      // Find the role with maximum occurrences (role could be null)
+      const roleCounts: Record<string, number> = {};
+      for (const p of userProfiles as Profile[]) {
+        const key = p.role ?? "unknown";
+        roleCounts[key] = (roleCounts[key] || 0) + 1;
+      }
 
-      // Redirect to home
-      router.push("/home");
+      // Find the role with highest count
+      let maxRole: string | null = null;
+      let maxCount = 0;
+      for (const [r, c] of Object.entries(roleCounts)) {
+        if (c > maxCount) {
+          maxCount = c;
+          maxRole = r;
+        }
+      }
+
+      let profilesToShow: Profile[] = userProfiles as Profile[];
+
+      // If a role occurs more than once, show only the profiles with that same role
+      if (maxRole !== null && maxCount > 1) {
+        profilesToShow = (userProfiles as Profile[]).filter(
+          (p) => (p.role ?? "unknown") === maxRole
+        );
+      }
+
+      // Set profiles for selection UI and move to choose step
+      setProfiles(profilesToShow);
+      setStep("choose");
+      setLoading(false);
     } catch (err: unknown) {
+      setLoading(false);
       if (err instanceof Error) {
         alert("Error: " + err.message);
       } else {
@@ -55,7 +123,7 @@ export default function SignInPage() {
   };
 
   return (
-    <div className="p-6 flex flex-col items-center justify-center h-screen text-center">
+    <div className="p-6 flex flex-col items-center justify-center h-screen text-center max-w-lg mx-auto">
       <h1 className="text-2xl font-bold mb-4">लॉगिन करें</h1>
 
       {step === "phone" && (
@@ -96,8 +164,68 @@ export default function SignInPage() {
           <button
             onClick={verifyOtp}
             className="w-full bg-blue-600 text-white py-3 rounded-lg text-lg shadow"
+            disabled={loading}
           >
-            लॉगिन करें ✅
+            {loading ? "चेक कर रहे हैं..." : "लॉगिन करें ✅"}
+          </button>
+
+          <button
+            onClick={() => {
+              // allow user to go back and change phone
+              setStep("phone");
+              setOtp("");
+              setGeneratedOtp("");
+            }}
+            className="mt-3 text-sm underline"
+          >
+            नंबर बदलें
+          </button>
+        </>
+      )}
+
+      {step === "choose" && profiles && (
+        <>
+          <p className="mb-3">
+            इस नंबर से कई profiles मिले — नीचे से अपना profile चुनें:
+          </p>
+
+          <div className="w-full grid grid-cols-1 gap-3">
+            {profiles.map((p) => (
+              <button
+                key={p.user_id}
+                onClick={() => finishLoginWithProfile(p)}
+                className="flex items-center gap-3 w-full p-3 border rounded hover:shadow"
+              >
+                <img
+                  src={p.profile_image_url ?? "/default-avatar.png"}
+                  alt={p.name ?? "Profile"}
+                  className="w-12 h-12 rounded-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = "/default-avatar.png";
+                  }}
+                />
+                <div className="text-left flex-1">
+                  <div className="font-semibold text-lg">{p.name ?? "नाम नहीं है"}</div>
+                  <div className="text-sm text-gray-600">
+                    {(p.role && p.role !== "unknown") ? p.role : p.occupation ?? "रोल/व्यवसाय उपलब्ध नहीं"}
+                  </div>
+                </div>
+                <div className="text-sm text-gray-500">खोलें →</div>
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => {
+              // go back to phone entry if they want to try different number
+              setStep("phone");
+              setProfiles(null);
+              setOtp("");
+              setGeneratedOtp("");
+            }}
+            className="mt-4 text-sm underline"
+          >
+            अलग नंबर से लॉगिन करें
           </button>
         </>
       )}

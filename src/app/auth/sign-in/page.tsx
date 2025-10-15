@@ -70,8 +70,11 @@ export default function SignInPage() {
       }
 
       if (!userProfiles || userProfiles.length === 0) {
+        // If no profiles found, redirect user to the sign-up page.
+        // We include the phone as a query param so signup can prefill it if you implement that.
         setLoading(false);
-        return alert("User profile नहीं मिला ❌, कृपया पहले साइनअप करें।");
+        router.push(`/auth/sign-up?phone=${encodeURIComponent(phone)}`);
+        return;
       }
 
       // If only one profile -> directly login

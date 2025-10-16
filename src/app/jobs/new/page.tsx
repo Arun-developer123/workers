@@ -114,7 +114,7 @@ export default function NewJobPage() {
   // -------------------------
   const [title, setTitle] = useState("");
   const [location, setLocation] = useState("");
-  const [wage, setWage] = useState(""); // optional manual rate per unit
+  const [wage, setWage] = useState(""); // will be populated from Supabase default rate (read-only for customer)
   const [description, setDescription] = useState("");
   const [contractorId, setContractorId] = useState<string | null>(null);
   const [occupation, setOccupation] = useState<string>("");
@@ -152,6 +152,15 @@ export default function NewJobPage() {
   const [roleChecked, setRoleChecked] = useState(false);
   const [isContractor, setIsContractor] = useState(false);
   const [alertedOnce, setAlertedOnce] = useState(false);
+
+  // default rate fetched from Supabase for given occupation+pricingBasis
+  const [defaultRate, setDefaultRate] = useState<number | null>(null);
+  const [defaultRateLoading, setDefaultRateLoading] = useState(false);
+  // new — store metadata & extra fields returned from pricing_defaults
+const [defaultMeta, setDefaultMeta] = useState<Record<string, any> | null>(null);
+const [defaultCurrency, setDefaultCurrency] = useState<string | null>(null);
+const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
+
 
   const router = useRouter();
 
@@ -319,7 +328,72 @@ export default function NewJobPage() {
     setWorkersForOccupation([]);
     setSelectedWorkerId("");
     setEstimates(null);
+
+    // when occupation changes, clear default rate
+    setDefaultRate(null);
+    setWage("");
   }, [occupation]);
+
+  // fetch default/manual rate from Supabase for given occupation+pricingBasis
+  useEffect(() => {
+    const fetchDefaultRate = async () => {
+      if (!occupation || !pricingBasis) {
+        setDefaultRate(null);
+        setWage("");
+        return;
+      }
+
+      setDefaultRateLoading(true);
+      try {
+        // NOTE:
+        // This expects a Supabase table named `pricing_defaults` (or change it to your actual table).
+        // Table columns expected: occupation (text), pricing_basis (text), rate (numeric)
+        // If your table has a different name/column, update the query accordingly.
+        const { data, error } = await supabase
+          .from("pricing_defaults")
+          .select("rate, currency, unit_hint, metadata")
+          .eq("occupation", occupation)
+          .eq("pricing_basis", pricingBasis)
+          .maybeSingle();
+
+
+        if (error) {
+  console.warn("Failed to fetch default rate:", error);
+  setDefaultRate(null);
+  setWage("");
+  setDefaultMeta(null);
+  setDefaultCurrency(null);
+  setDefaultUnitHint(null);
+} else if (data && (data as any).rate != null) {
+  const r = Number((data as any).rate);
+  if (!isNaN(r)) {
+    setDefaultRate(r);
+    setWage(String(r));
+    setDefaultCurrency((data as any).currency ?? "INR");
+    setDefaultUnitHint((data as any).unit_hint ?? null);
+    setDefaultMeta((data as any).metadata ?? null);
+  } else {
+    setDefaultRate(null);
+    setWage("");
+    setDefaultMeta(null);
+    setDefaultCurrency(null);
+    setDefaultUnitHint(null);
+  }
+} else {
+  // no default found
+  setDefaultRate(null);
+  setWage("");
+  setDefaultMeta(null);
+  setDefaultCurrency(null);
+  setDefaultUnitHint(null);
+}}
+ finally {
+        setDefaultRateLoading(false);
+      }
+    };
+
+    fetchDefaultRate();
+  }, [occupation, pricingBasis]);
 
   // fetch workers for the chosen occupation+pricingBasis (from profiles table)
   useEffect(() => {
@@ -638,7 +712,7 @@ export default function NewJobPage() {
         Specific Worker (optional) / या Manual rate (₹ per unit)
         <AudioButton text="विशेष worker चुनें" />
       </label>
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
         <select value={selectedWorkerId ?? ""} onChange={(e) => setSelectedWorkerId(e.target.value as string | "avg" | "")} className="border p-3 rounded text-lg flex-1">
           <option value="">-- default: use average --</option>
           <option value="avg">Use average rate of available workers</option>
@@ -649,7 +723,46 @@ export default function NewJobPage() {
           ))}
         </select>
 
-        <input value={wage} onChange={(e) => setWage(e.target.value)} placeholder="Manual rate per unit (optional)" className="border p-3 rounded text-lg w-48" />
+        {/* wage is now read-only and populated from Supabase default table (if available).
+            User cannot edit this field as requested. */}
+        <div className="flex flex-col w-48">
+          <input
+            value={wage}
+            readOnly
+            disabled
+            placeholder={defaultRateLoading ? "लाया जा रहा है..." : defaultRate == null ? "कोई default rate नहीं" : ""}
+            className="border p-3 rounded text-lg bg-gray-100 text-gray-700 text-center"
+          />
+          <div className="text-xs text-gray-600 mt-1 text-center">
+  {defaultRateLoading ? (
+    "Default rate जांच रहे हैं..."
+  ) : defaultRate != null ? (
+    <>
+      <div>Default: <strong>₹{Number(defaultRate).toFixed(2)}</strong> per {defaultUnitHint ?? pricingBasis}</div>
+      <div className="mt-1">Currency: <strong>{defaultCurrency ?? "INR"}</strong></div>
+
+      {/* metadata show — friendly list when available */}
+      {defaultMeta ? (
+        <div className="mt-2 text-left bg-white p-2 rounded text-xs shadow-sm">
+          {/* common keys (example): note, min_hours, source */}
+          {defaultMeta.note && <div><strong>Note:</strong> {String(defaultMeta.note)}</div>}
+          {defaultMeta.source && <div><strong>Source:</strong> {String(defaultMeta.source)}</div>}
+          {defaultMeta.min_hours && <div><strong>Min hours:</strong> {String(defaultMeta.min_hours)}</div>}
+          {defaultMeta.typical_job && <div><strong>Typical:</strong> {String(defaultMeta.typical_job)}</div>}
+
+          {/* fallback: show raw metadata if none of the above keys matched */}
+          {(!defaultMeta.note && !defaultMeta.source && !defaultMeta.min_hours && !defaultMeta.typical_job) && (
+            <div><strong>Info:</strong> {JSON.stringify(defaultMeta)}</div>
+          )}
+        </div>
+      ) : null}
+    </>
+  ) : (
+    "Default rate उपलब्ध नहीं — ग्राहक edit नहीं कर सकता"
+  )}
+</div>
+
+        </div>
       </div>
 
       <label className="text-lg flex items-center gap-2">

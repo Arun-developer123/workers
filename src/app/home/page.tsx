@@ -33,6 +33,8 @@ interface Application {
   status: "pending" | "accepted" | "rejected";
   jobs?: Job[]; // jobs array from join or fetched separately
   shiftstatus?: string | null;
+  offered_wage?: number | null;
+  contractor_wage?: number | null;
 }
 
 interface ShiftLog {
@@ -177,7 +179,7 @@ export default function HomePage() {
       const { data: apps, error } = await supabase
         .from("applications")
         // attempt to include job fields if foreign key relationship present in Supabase
-        .select("id, worker_id, contractor_id, job_id, status, jobs(title, location, wage, contractor_id, description)")
+        .select("id, worker_id, contractor_id, job_id, status, offered_wage, contractor_wage, jobs(title, location, wage, contractor_id, description)")
         .eq("contractor_id", userId)
         .order("created_at", { ascending: false });
 
@@ -257,14 +259,23 @@ export default function HomePage() {
         const fetchedJob = jobsDataById[a.job_id];
         const job = (joinedJob || fetchedJob) as Job | undefined;
 
-        // if job.wage is missing, fallback to worker's profile wage (use local mapWage computed above)
-        let resolvedWage: number | string | null = null;
-        if (job && job.wage != null && String(job.wage).trim() !== "") {
-          resolvedWage = job.wage;
-        } else {
-          const wWage = mapWage[a.worker_id];
-          if (wWage != null) resolvedWage = wWage;
-        }
+       // prefer application-level contractor_wage (if worker proposed one), then job wage, then worker profile wage
+let resolvedWage: number | string | null = null;
+
+// application-level fields (might not be in TS type so use any)
+const appOffered = (a as any).offered_wage;
+const appContractor = (a as any).contractor_wage;
+
+if (appContractor != null && appContractor !== "") {
+  resolvedWage = appContractor;
+} else if (job && job.wage != null && String(job.wage).trim() !== "") {
+  resolvedWage = job.wage;
+} else {
+  const wWage = mapWage[a.worker_id];
+  if (wWage != null) resolvedWage = wWage;
+}
+
+
 
         const shift = (shifts || [])?.find(
           (s) => s.worker_id === a.worker_id && s.contractor_id === a.contractor_id && s.job_id === a.job_id
@@ -311,18 +322,64 @@ export default function HomePage() {
   };
 
   // Worker → Apply Job
-  const applyJob = async (jobId: string) => {
+  // Replace existing applyJob with this
+const applyJob = async (jobId: string) => {
+  try {
     const contractorId = jobs.find((j) => j.id === jobId)?.contractor_id;
+    if (!contractorId) return alert("❌ Contractor ID नहीं मिली");
+
+    // 1) Ask worker for the wage they want to request
+    const wageStr = prompt("आप इस काम के लिए कितना वेतन मांगते हैं? (₹) — सिर्फ़ नंबर दर्ज करें:");
+    if (!wageStr) return; // cancelled
+    const wageNum = Number(wageStr);
+    if (isNaN(wageNum) || wageNum <= 0) return alert("कृपया वैध संख्या दर्ज करें");
+
+    // 2) compute +10%
+    const plusTen = wageNum * 1.1;
+
+    // 3) apply your rounding/adding rule:
+    //    if after +10% the amount is between 1 and 50 (inclusive) => add 50
+    //    if above 50 => add 100
+    let contractorShown = plusTen;
+    if (plusTen > 0 && plusTen <= 50) {
+      contractorShown = plusTen + 50;
+    } else if (plusTen > 50) {
+      contractorShown = plusTen + 100;
+    }
+    // final rounding to nearest integer
+    contractorShown = Math.round(contractorShown);
+
+    // 4) Show confirmation to worker (so they know what contractor will see)
+    const ok = confirm(
+      `आपने ₹${wageNum} माँगा। \nक्या आप आवेदन भेजना चाहते हैं?`
+    );
+    if (!ok) return;
+
+    // 5) Insert application with offered_wage and contractor_wage fields
     const { error } = await supabase.from("applications").insert({
       worker_id: profile?.user_id,
       contractor_id: contractorId,
       job_id: jobId,
       status: "pending",
+      offered_wage: wageNum,        // worker का दिया हुआ वेतन
+      contractor_wage: contractorShown, // contractor को दिखाने के लिए तैयार रकम
     });
 
-    if (error) alert("आवेदन करने में समस्या ❌");
-    else alert("✅ आवेदन भेज दिया गया");
-  };
+    if (error) {
+      console.error("applyJob insert error:", error);
+      alert("आवेदन भेजने में समस्या ❌");
+    } else {
+      alert("✅ आवेदन भेज दिया गया — contractor को आपका प्रस्ताव दिख जाएगा");
+      // refresh UI (optional)
+      if (profile?.role === "worker") fetchJobs();
+      if (profile?.role === "contractor") fetchContractorData(profile.user_id);
+    }
+  } catch (err) {
+    console.error("applyJob unexpected", err);
+    alert("कुछ गलत हुआ — बाद में कोशिश करें");
+  }
+};
+
 
   // Contractor → Accept/Reject
   const updateApplication = async (appId: string, status: "accepted" | "rejected") => {
@@ -770,7 +827,7 @@ export default function HomePage() {
                     <div className="flex-1">
                       <div className="text-lg font-bold">{job.title}</div>
                       <div className="text-sm opacity-80 mt-1">स्थान: {renderLocation(job.location)}</div>
-                      <div className="text-sm opacity-70 mt-2">₹{job.wage} भुगतान</div>
+                    
                       <div className="text-xs opacity-60 mt-1">Posted: {job.created_at ? new Date(job.created_at).toLocaleString() : "—"}</div>
 
                       {/* expanded description */}
@@ -831,11 +888,12 @@ export default function HomePage() {
                 // Show green border until both pay & rating are done
                 const shouldHighlightGreen = !isCompleted && (app.status === "pending" || app.status === "accepted");
 
-                // safe wage display: prefer job's wage, then worker profile wage, else —
-                let wageDisplayRaw: number | string | null | undefined = jobObj?.wage;
-                if ((wageDisplayRaw == null || wageDisplayRaw === "" || Number(wageDisplayRaw) === 0) && workerWageMap[app.worker_id] != null) {
-                  wageDisplayRaw = workerWageMap[app.worker_id] as number;
-                }
+                // safe wage display: prefer application.contractor_wage, then job's wage, then worker profile wage
+let wageDisplayRaw: number | string | null | undefined = (app as any).contractor_wage ?? jobObj?.wage;
+if ((wageDisplayRaw == null || wageDisplayRaw === "" || Number(wageDisplayRaw) === 0) && workerWageMap[app.worker_id] != null) {
+  wageDisplayRaw = workerWageMap[app.worker_id] as number;
+}
+
 
                 const wageDisplay = wageDisplayRaw != null && wageDisplayRaw !== "" ? wageDisplayRaw : "—";
 

@@ -38,6 +38,10 @@ export default function SignInPage() {
 
     const otpNum = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedOtp(otpNum);
+
+    // Auto-fill the OTP input so user doesn't have to type it
+    setOtp(otpNum);
+
     alert(`आपका OTP है: ${otpNum}`);
     setStep("otp");
   };

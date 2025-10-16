@@ -29,6 +29,10 @@ export default function SignUpPage() {
 
     const otpNum = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedOtp(otpNum);
+
+    // Auto-fill the OTP input so user doesn't have to type it
+    setOtp(otpNum);
+
     // For now we show OTP via alert (local flow). Replace with real SMS provider in production.
     alert(`आपका OTP है: ${otpNum}`);
     setStep("otp");

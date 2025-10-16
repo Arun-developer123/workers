@@ -22,6 +22,8 @@ type Application = {
   job_id: string;
   jobs: Job;
   contractorPhone?: string | null;
+  offered_wage?: number | null;
+  contractor_wage?: number | null;
 };
 
 type Contractor = {
@@ -91,13 +93,16 @@ export default function MyApplicationsPage() {
         const { data, error } = await supabase
           .from("applications")
           .select(`
-            id,
-            status,
-            created_at,
-            contractor_id,
-            job_id,
-            jobs(title, location, wage, description)
-          `)
+  id,
+  status,
+  created_at,
+  contractor_id,
+  job_id,
+  offered_wage,
+  contractor_wage,
+  jobs(title, location, wage, description)
+`)
+
           .eq("worker_id", profile.user_id)
           .order("created_at", { ascending: false });
 
@@ -105,10 +110,16 @@ export default function MyApplicationsPage() {
 
         const rawApplications = (data || []) as RawApplicationFromSupabase[];
 
-        const parsedApplications: Application[] = rawApplications.map((app) => ({
-          ...app,
-          jobs: Array.isArray(app.jobs) ? app.jobs[0] : app.jobs,
-        }));
+        const parsedApplications: Application[] = rawApplications.map((app) => {
+  const jobsSingle = Array.isArray(app.jobs) ? app.jobs[0] : app.jobs;
+  return {
+    ...app,
+    jobs: jobsSingle,
+    offered_wage: (app as any).offered_wage ?? null,
+    contractor_wage: (app as any).contractor_wage ?? null,
+  } as Application;
+});
+
 
         const contractorIds = Array.from(
           new Set(parsedApplications.map((app) => app.contractor_id))
@@ -463,7 +474,19 @@ export default function MyApplicationsPage() {
                 <p className="text-lg font-bold">
                   {app.jobs?.title || "—"} ({app.jobs?.location || "—"})
                 </p>
-                <p>मज़दूरी: ₹{app.jobs?.wage || "—"}</p>
+                {/* compute display wage: prefer application.offered_wage, then job.wage */}
+{(() => {
+  const offered = (app as any).offered_wage;
+  const jobWage = app.jobs?.wage;
+  const useVal = offered != null && offered !== "" ? Number(offered) : jobWage != null ? Number(jobWage) : null;
+  return (
+    <p>
+      मज़दूरी:{" "}
+      {useVal != null && !isNaN(useVal) ? `₹${Math.round(useVal)}` : "—"}
+    </p>
+  );
+})()}
+
                 <p className="text-sm text-gray-600">
                   विवरण: {app.jobs?.description || "—"}
                 </p>

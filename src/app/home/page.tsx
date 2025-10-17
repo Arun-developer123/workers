@@ -259,14 +259,12 @@ export default function HomePage() {
         const fetchedJob = jobsDataById[a.job_id];
         const job = (joinedJob || fetchedJob) as Job | undefined;
 
-       // prefer application-level contractor_wage (if worker proposed one), then job wage, then worker profile wage
-let resolvedWage: number | string | null = null;
+       let resolvedWage: number | string | null = null;
 
-// application-level fields (might not be in TS type so use any)
-const appOffered = (a as any).offered_wage;
-const appContractor = (a as any).contractor_wage;
+// access application-level fields directly
+const appContractor = a.contractor_wage ?? null;
 
-if (appContractor != null && appContractor !== "") {
+if (appContractor != null && String(appContractor).trim() !== "") {
   resolvedWage = appContractor;
 } else if (job && job.wage != null && String(job.wage).trim() !== "") {
   resolvedWage = job.wage;
@@ -274,6 +272,7 @@ if (appContractor != null && appContractor !== "") {
   const wWage = mapWage[a.worker_id];
   if (wWage != null) resolvedWage = wWage;
 }
+
 
 
 
@@ -889,7 +888,7 @@ const applyJob = async (jobId: string) => {
                 const shouldHighlightGreen = !isCompleted && (app.status === "pending" || app.status === "accepted");
 
                 // safe wage display: prefer application.contractor_wage, then job's wage, then worker profile wage
-let wageDisplayRaw: number | string | null | undefined = (app as any).contractor_wage ?? jobObj?.wage;
+let wageDisplayRaw: number | string | null | undefined = app.contractor_wage ?? jobObj?.wage;
 if ((wageDisplayRaw == null || wageDisplayRaw === "" || Number(wageDisplayRaw) === 0) && workerWageMap[app.worker_id] != null) {
   wageDisplayRaw = workerWageMap[app.worker_id] as number;
 }

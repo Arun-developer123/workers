@@ -72,6 +72,13 @@ export default function MyApplicationsPage() {
   const [showRatingForm, setShowRatingForm] = useState<string | null>(null); // app.id
   const [ratingForm, setRatingForm] = useState<RatingFormState>({ rating: 5, review: "" });
   const router = useRouter();
+  // --- Helper: coerce unknown -> number | null ---
+const toNumberOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 
   useEffect(() => {
     const fetchApplications = async () => {
@@ -111,14 +118,26 @@ export default function MyApplicationsPage() {
         const rawApplications = (data || []) as RawApplicationFromSupabase[];
 
         const parsedApplications: Application[] = rawApplications.map((app) => {
-  const jobsSingle = Array.isArray(app.jobs) ? app.jobs[0] : app.jobs;
+  // jobs might come back as array from Supabase (jobs(title, ...)) — pick first if array
+  const jobsSingle: Job =
+    Array.isArray((app as unknown as { jobs: unknown }).jobs)
+      ? ((app as unknown as { jobs: Job[] }).jobs[0] ?? {
+          title: "",
+          location: "",
+          wage: 0,
+          description: "",
+        })
+      : ((app as unknown as { jobs: Job }).jobs as Job);
+
   return {
     ...app,
     jobs: jobsSingle,
-    offered_wage: (app as any).offered_wage ?? null,
-    contractor_wage: (app as any).contractor_wage ?? null,
+    // coerce to number|null safely instead of casting to any
+    offered_wage: toNumberOrNull((app as unknown as { offered_wage?: unknown }).offered_wage),
+    contractor_wage: toNumberOrNull((app as unknown as { contractor_wage?: unknown }).contractor_wage),
   } as Application;
 });
+
 
 
         const contractorIds = Array.from(
@@ -476,16 +495,18 @@ export default function MyApplicationsPage() {
                 </p>
                 {/* compute display wage: prefer application.offered_wage, then job.wage */}
 {(() => {
-  const offered = (app as any).offered_wage;
-  const jobWage = app.jobs?.wage;
-  const useVal = offered != null && offered !== "" ? Number(offered) : jobWage != null ? Number(jobWage) : null;
+  const offeredNum = toNumberOrNull(app.offered_wage);
+  const jobWageNum = toNumberOrNull(app.jobs?.wage);
+  const useVal = offeredNum ?? jobWageNum;
+
   return (
     <p>
       मज़दूरी:{" "}
-      {useVal != null && !isNaN(useVal) ? `₹${Math.round(useVal)}` : "—"}
+      {useVal != null ? `₹${Math.round(useVal)}` : "—"}
     </p>
   );
 })()}
+
 
                 <p className="text-sm text-gray-600">
                   विवरण: {app.jobs?.description || "—"}

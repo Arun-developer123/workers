@@ -82,6 +82,15 @@ type Addon = {
   unitPrice: number;
 };
 
+// Add after `type Addon = { ... }`
+type PricingDefaultRow = {
+  rate?: number | string | null;
+  currency?: string | null;
+  unit_hint?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+
 // Strongly typed shape for job insert (avoid `any`)
 type JobInsert = {
   contractor_id: string;
@@ -157,7 +166,7 @@ export default function NewJobPage() {
   const [defaultRate, setDefaultRate] = useState<number | null>(null);
   const [defaultRateLoading, setDefaultRateLoading] = useState(false);
   // new — store metadata & extra fields returned from pricing_defaults
-const [defaultMeta, setDefaultMeta] = useState<Record<string, any> | null>(null);
+const [defaultMeta, setDefaultMeta] = useState<Record<string, unknown> | null>(null);
 const [defaultCurrency, setDefaultCurrency] = useState<string | null>(null);
 const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
 
@@ -357,21 +366,24 @@ const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
           .maybeSingle();
 
 
-        if (error) {
+        // inside fetchDefaultRate effect, replace handling of `data`
+const pricingRow = data as PricingDefaultRow | null;
+
+if (error) {
   console.warn("Failed to fetch default rate:", error);
   setDefaultRate(null);
   setWage("");
   setDefaultMeta(null);
   setDefaultCurrency(null);
   setDefaultUnitHint(null);
-} else if (data && (data as any).rate != null) {
-  const r = Number((data as any).rate);
+} else if (pricingRow && pricingRow.rate != null) {
+  const r = Number(pricingRow.rate);
   if (!isNaN(r)) {
     setDefaultRate(r);
     setWage(String(r));
-    setDefaultCurrency((data as any).currency ?? "INR");
-    setDefaultUnitHint((data as any).unit_hint ?? null);
-    setDefaultMeta((data as any).metadata ?? null);
+    setDefaultCurrency(pricingRow.currency ?? "INR");
+    setDefaultUnitHint(pricingRow.unit_hint ?? null);
+    setDefaultMeta(pricingRow.metadata ?? null);
   } else {
     setDefaultRate(null);
     setWage("");
@@ -386,7 +398,8 @@ const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
   setDefaultMeta(null);
   setDefaultCurrency(null);
   setDefaultUnitHint(null);
-}}
+}
+}
  finally {
         setDefaultRateLoading(false);
       }
@@ -743,19 +756,31 @@ const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
 
       {/* metadata show — friendly list when available */}
       {defaultMeta ? (
-        <div className="mt-2 text-left bg-white p-2 rounded text-xs shadow-sm">
-          {/* common keys (example): note, min_hours, source */}
-          {defaultMeta.note && <div><strong>Note:</strong> {String(defaultMeta.note)}</div>}
-          {defaultMeta.source && <div><strong>Source:</strong> {String(defaultMeta.source)}</div>}
-          {defaultMeta.min_hours && <div><strong>Min hours:</strong> {String(defaultMeta.min_hours)}</div>}
-          {defaultMeta.typical_job && <div><strong>Typical:</strong> {String(defaultMeta.typical_job)}</div>}
+  <div className="mt-2 text-left bg-white p-2 rounded text-xs shadow-sm">
+    {/* common keys (example): note, min_hours, source */}
+    {typeof defaultMeta["note"] === "string" && (
+      <div><strong>Note:</strong> {defaultMeta["note"]}</div>
+    )}
+    {typeof defaultMeta["source"] === "string" && (
+      <div><strong>Source:</strong> {defaultMeta["source"]}</div>
+    )}
+    {defaultMeta["min_hours"] != null && (
+      <div><strong>Min hours:</strong> {String(defaultMeta["min_hours"])}</div>
+    )}
+    {typeof defaultMeta["typical_job"] === "string" && (
+      <div><strong>Typical:</strong> {defaultMeta["typical_job"]}</div>
+    )}
 
-          {/* fallback: show raw metadata if none of the above keys matched */}
-          {(!defaultMeta.note && !defaultMeta.source && !defaultMeta.min_hours && !defaultMeta.typical_job) && (
-            <div><strong>Info:</strong> {JSON.stringify(defaultMeta)}</div>
-          )}
-        </div>
-      ) : null}
+    {/* fallback: show raw metadata if none of the above keys matched */}
+    {typeof defaultMeta["note"] !== "string" &&
+     typeof defaultMeta["source"] !== "string" &&
+     defaultMeta["min_hours"] == null &&
+     typeof defaultMeta["typical_job"] !== "string" && (
+      <div><strong>Info:</strong> {JSON.stringify(defaultMeta)}</div>
+    )}
+  </div>
+) : null}
+
     </>
   ) : (
     "Default rate उपलब्ध नहीं — ग्राहक edit नहीं कर सकता"

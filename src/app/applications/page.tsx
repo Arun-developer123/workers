@@ -64,21 +64,22 @@ type ShiftOtp = {
   used: boolean;
 };
 
-
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeShift, setActiveShift] = useState<ActiveShifts>({});
   const [showRatingForm, setShowRatingForm] = useState<string | null>(null); // app.id
   const [ratingForm, setRatingForm] = useState<RatingFormState>({ rating: 5, review: "" });
+  const [ratingsGiven, setRatingsGiven] = useState<{ [appId: string]: boolean }>({});
+  const [completedApps, setCompletedApps] = useState<{ [appId: string]: boolean }>({});
   const router = useRouter();
-  // --- Helper: coerce unknown -> number | null ---
-const toNumberOrNull = (v: unknown): number | null => {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
 
+  // --- Helper: coerce unknown -> number | null ---
+  const toNumberOrNull = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
 
   useEffect(() => {
     const fetchApplications = async () => {
@@ -109,7 +110,6 @@ const toNumberOrNull = (v: unknown): number | null => {
   contractor_wage,
   jobs(title, location, wage, description)
 `)
-
           .eq("worker_id", profile.user_id)
           .order("created_at", { ascending: false });
 
@@ -118,45 +118,82 @@ const toNumberOrNull = (v: unknown): number | null => {
         const rawApplications = (data || []) as RawApplicationFromSupabase[];
 
         const parsedApplications: Application[] = rawApplications.map((app) => {
-  // jobs might come back as array from Supabase (jobs(title, ...)) — pick first if array
-  const jobsSingle: Job =
-    Array.isArray((app as unknown as { jobs: unknown }).jobs)
-      ? ((app as unknown as { jobs: Job[] }).jobs[0] ?? {
-          title: "",
-          location: "",
-          wage: 0,
-          description: "",
-        })
-      : ((app as unknown as { jobs: Job }).jobs as Job);
+          // jobs might come back as array from Supabase (jobs(title, ...)) — pick first if array
+          const jobsSingle: Job =
+            Array.isArray((app as unknown as { jobs: unknown }).jobs)
+              ? ((app as unknown as { jobs: Job[] }).jobs[0] ?? {
+                  title: "",
+                  location: "",
+                  wage: 0,
+                  description: "",
+                })
+              : ((app as unknown as { jobs: Job }).jobs as Job);
 
-  return {
-    ...app,
-    jobs: jobsSingle,
-    // coerce to number|null safely instead of casting to any
-    offered_wage: toNumberOrNull((app as unknown as { offered_wage?: unknown }).offered_wage),
-    contractor_wage: toNumberOrNull((app as unknown as { contractor_wage?: unknown }).contractor_wage),
-  } as Application;
-});
-
-
-
-        const contractorIds = Array.from(
-          new Set(parsedApplications.map((app) => app.contractor_id))
-        );
-
-        const { data: contractorsData } = await supabase
-          .from("profiles")
-          .select("user_id, phone")
-          .in("user_id", contractorIds);
-
-        const contractors = (contractorsData || []) as Contractor[];
-
-        const enrichedApps = parsedApplications.map((app) => {
-          const contractor = contractors.find((c) => c.user_id === app.contractor_id);
-          return { ...app, contractorPhone: contractor?.phone || null };
+          return {
+            ...app,
+            jobs: jobsSingle,
+            // coerce to number|null safely instead of casting to any
+            offered_wage: toNumberOrNull((app as unknown as { offered_wage?: unknown }).offered_wage),
+            contractor_wage: toNumberOrNull((app as unknown as { contractor_wage?: unknown }).contractor_wage),
+          } as Application;
         });
 
-        setApplications(enrichedApps);
+        setApplications(parsedApplications);
+
+        // --- New: fetch shift_logs and ratings for the fetched applications so we can show "Job Done" ---
+        const jobIds = Array.from(new Set(parsedApplications.map((a) => a.job_id).filter(Boolean)));
+        // fetch shift_logs for this worker across these jobs
+        const { data: shiftsData, error: shiftsErr } = await supabase
+          .from("shift_logs")
+          .select("*")
+          .in("job_id", jobIds)
+          .eq("worker_id", profile.user_id);
+
+        if (shiftsErr) {
+          console.error("fetch shifts error", shiftsErr);
+        }
+
+        const shifts = (shiftsData || []) as ShiftLog[];
+
+        // Map shifts to applications by matching job_id + contractor_id
+        const activeShiftMap: ActiveShifts = {};
+        parsedApplications.forEach((app) => {
+          const found = shifts.find(
+            (s) => s.job_id === app.job_id && s.contractor_id === app.contractor_id && s.worker_id === profile.user_id
+          );
+          activeShiftMap[app.id] = found ?? null;
+        });
+        setActiveShift(activeShiftMap);
+
+        // fetch ratings already submitted BY THIS WORKER for these jobs -> so we know if rating exists
+        const { data: ratingsData, error: ratingsErr } = await supabase
+          .from("ratings")
+          .select("id, job_id, rater_id")
+          .in("job_id", jobIds)
+          .eq("rater_id", profile.user_id);
+
+        if (ratingsErr) {
+          console.error("fetch ratings error", ratingsErr);
+        }
+
+        const ratings = (ratingsData || []) as { id: string; job_id: string; rater_id: string }[];
+
+        // Build ratingsGiven map keyed by application id (if this worker has rated that job)
+        const ratingsMap: { [appId: string]: boolean } = {};
+        parsedApplications.forEach((app) => {
+          const hasRated = ratings.some((r) => r.job_id === app.job_id);
+          ratingsMap[app.id] = !!hasRated;
+        });
+        setRatingsGiven(ratingsMap);
+
+        // Build completedApps: shift completed && rating present
+        const completedMap: { [appId: string]: boolean } = {};
+        parsedApplications.forEach((app) => {
+          const shift = activeShiftMap[app.id];
+          const shiftCompleted = !!shift && shift.status === "completed";
+          completedMap[app.id] = shiftCompleted && !!ratingsMap[app.id];
+        });
+        setCompletedApps(completedMap);
       } catch (err) {
         console.error("❌ Applications fetch error:", err);
         alert("Applications fetch में समस्या हुई");
@@ -243,7 +280,7 @@ const toNumberOrNull = (v: unknown): number | null => {
     }
   };
 
-  // START SHIFT flow with OTP + contractor wallet deduction (worker prompted for OTP)
+  // START SHIFT flow with OTP (worker prompted for OTP)
   const startShift = async (app: Application) => {
     const storedProfile = JSON.parse(localStorage.getItem("fake_user_profile") || "{}");
     const workerId = storedProfile.user_id;
@@ -267,7 +304,7 @@ const toNumberOrNull = (v: unknown): number | null => {
     );
 
     // Prompt worker to enter OTP provided by contractor
-    const entered = prompt("कृपया contractor द्वारा दिया गया START OTP दर्ज करें:");
+    const entered = prompt("कृपया contractor द्वारा दिया गया START OTP दर्ज کریں:");
     if (!entered) {
       alert("❌ OTP दर्ज नहीं किया गया");
       return;
@@ -279,46 +316,7 @@ const toNumberOrNull = (v: unknown): number | null => {
       return;
     }
 
-    // Fetch wage (prefer job object)
-    const wageNum = Number(app.jobs?.wage || 0);
-    if (isNaN(wageNum) || wageNum <= 0) {
-      alert("❌ इस जॉब का valid wage नहीं मिला");
-      return;
-    }
-
-    // Ensure contractor has sufficient balance, then deduct
     try {
-      const { data: walletRow, error: walletErr } = await supabase
-        .from("wallets")
-        .select("balance")
-        .eq("user_id", app.contractor_id)
-        .single();
-
-      if (walletErr || !walletRow) {
-        console.error("wallet fetch error", walletErr);
-        alert("❌ Contractor का वॉलेट नहीं मिला");
-        return;
-      }
-
-      const contractorBalance = Number(walletRow.balance || 0);
-      if (contractorBalance < wageNum) {
-        alert("❌ Contractor के पास पर्याप्त बैलेंस नहीं है — पहले contractor वॉलेट रिचार्ज करें");
-        return;
-      }
-
-      // Deduct contractor balance
-      const newContractorBalance = contractorBalance - wageNum;
-      const { error: deductErr } = await supabase
-        .from("wallets")
-        .update({ balance: newContractorBalance })
-        .eq("user_id", app.contractor_id);
-
-      if (deductErr) {
-        console.error("deduct error", deductErr);
-        alert("❌ Contractor के वॉलेट से राशि घटाने में समस्या");
-        return;
-      }
-
       // Mark OTP used
       await markOtpUsed(row.id);
 
@@ -337,15 +335,14 @@ const toNumberOrNull = (v: unknown): number | null => {
 
       if (shiftErr) {
         console.error("shift insert error", shiftErr);
-        // rollback contractor deduction (best-effort)
-        await supabase.from("wallets").update({ balance: contractorBalance }).eq("user_id", app.contractor_id);
-        alert("❌ शिफ्ट शुरू करने में समस्या — रिवर्ट हो रहा है");
+        alert("❌ शिफ्ट शुरू करने में समस्या");
         return;
       }
 
       const shift: ShiftLog = shiftData as ShiftLog;
-      alert("✅ शिफ्ट सफलतापूर्वक शुरू हो गई — Contractor के वॉलेट से राशि कट चुकी है (Worker को तब तक क्रेडिट नहीं मिली)");
+      alert("✅ शिफ्ट सफलतापूर्वक शुरू हो गई।");
 
+      // set active shift for this application
       setActiveShift((prev) => ({ ...prev, [app.id]: shift }));
     } catch (err) {
       console.error("startShift unexpected", err);
@@ -353,7 +350,7 @@ const toNumberOrNull = (v: unknown): number | null => {
     }
   };
 
-  // END SHIFT flow with OTP + credit worker wallet only after OTP validated
+  // END SHIFT flow with OTP — no payment logic here
   const endShift = async (app: Application) => {
     const shift = activeShift[app.id];
     if (!shift) {
@@ -409,31 +406,15 @@ const toNumberOrNull = (v: unknown): number | null => {
 
       if (endErr) {
         console.error("end shift update error", endErr);
-        alert("❌ शिफ्ट समाप्त करने में समस्या");
+        alert("❌ शिफ्ट समाप्त करने में समस्या (shift log update)");
         return;
       }
 
-      // Credit worker wallet via RPC increment_wallet (same as contractor flow)
-      const wageNum = Number(app.jobs?.wage || 0);
-      if (isNaN(wageNum) || wageNum <= 0) {
-        alert("❌ इस जॉब का valid wage नहीं मिला");
-        return;
-      }
-
-      const { error: incErr } = await supabase.rpc("increment_wallet", {
-        worker_id: workerId,
-        amount: wageNum,
-      });
-
-      if (incErr) {
-        console.error("increment_wallet error", incErr);
-        alert("❌ Worker को भुगतान करने में समस्या हुई — कृपया support से संपर्क करें");
-        return;
-      }
-
-      alert("✅ शिफ्ट समाप्त मानी गई और Worker के वॉलेट में राशि क्रेडिट कर दी गई");
+      alert("✅ शिफ्ट पूर्ण हुई — अब आप contractor को रेट कर सकते हैं।");
+      // clear active shift for this app
       setActiveShift((prev) => ({ ...prev, [app.id]: null }));
-      setShowRatingForm(app.id); // अब rating form दिखेगा
+      // show rating form
+      setShowRatingForm(app.id);
     } catch (err) {
       console.error("endShift unexpected", err);
       alert("❌ शिफ्ट समाप्त करने में समस्या");
@@ -457,6 +438,30 @@ const toNumberOrNull = (v: unknown): number | null => {
       alert("✅ रेटिंग सफलतापूर्वक सबमिट हुई");
       setShowRatingForm(null);
       setRatingForm({ rating: 5, review: "" });
+
+      // mark rating present for this application
+      setRatingsGiven((prev) => ({ ...prev, [app.id]: true }));
+
+      // After rating, check if shift was completed earlier — if yes, mark Job Done
+      const shiftForApp = activeShift[app.id];
+      // Note: activeShift may be null if we cleared after endShift; to be safe, re-check shift_logs status from server
+      const { data: shiftCheck } = await supabase
+        .from("shift_logs")
+        .select("status")
+        .eq("job_id", app.job_id)
+        .eq("worker_id", storedProfile.user_id)
+        .eq("contractor_id", app.contractor_id)
+        .order("start_time", { ascending: false })
+        .limit(1)
+        .single();
+
+      const shiftStatus = (shiftCheck as any)?.status ?? (shiftForApp ? shiftForApp.status : null);
+      if (shiftStatus === "completed") {
+        setCompletedApps((prev) => ({ ...prev, [app.id]: true }));
+      } else {
+        // if shift not completed yet, we still set ratingsGiven; completedApps will be set later when shift completes
+        setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || false }));
+      }
     } catch (err) {
       console.error("❌ Rating insert error:", err);
       alert("रेटिंग सबमिट करने में समस्या हुई");
@@ -484,29 +489,33 @@ const toNumberOrNull = (v: unknown): number | null => {
           {applications.map((app) => {
             const shift = activeShift[app.id];
             const isRatingVisible = showRatingForm === app.id;
+            const isCompleted = !!completedApps[app.id]; // Job Done if true
 
             return (
               <div
                 key={app.id}
-                className="border rounded-lg p-4 shadow flex flex-col gap-2"
+                className={`border rounded-lg p-4 shadow flex flex-col gap-2 ${isCompleted ? "border-red-500" : ""}`}
               >
-                <p className="text-lg font-bold">
-                  {app.jobs?.title || "—"} ({app.jobs?.location || "—"})
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-lg font-bold">
+                    {app.jobs?.title || "—"} ({app.jobs?.location || "—"})
+                  </p>
+                  {isCompleted && <div className="text-sm font-semibold text-green-700">✅ Job Done</div>}
+                </div>
+
                 {/* compute display wage: prefer application.offered_wage, then job.wage */}
-{(() => {
-  const offeredNum = toNumberOrNull(app.offered_wage);
-  const jobWageNum = toNumberOrNull(app.jobs?.wage);
-  const useVal = offeredNum ?? jobWageNum;
+                {(() => {
+                  const offeredNum = toNumberOrNull(app.offered_wage);
+                  const jobWageNum = toNumberOrNull(app.jobs?.wage);
+                  const useVal = offeredNum ?? jobWageNum;
 
-  return (
-    <p>
-      मज़दूरी:{" "}
-      {useVal != null ? `₹${Math.round(useVal)}` : "—"}
-    </p>
-  );
-})()}
-
+                  return (
+                    <p>
+                      मज़दूरी:{" "}
+                      {useVal != null ? `₹${Math.round(useVal)}` : "—"}
+                    </p>
+                  );
+                })()}
 
                 <p className="text-sm text-gray-600">
                   विवरण: {app.jobs?.description || "—"}
@@ -588,7 +597,7 @@ const toNumberOrNull = (v: unknown): number | null => {
                         )}
                       </>
                     ) : (
-                      <>
+                      <div className="flex gap-2">
                         <button
                           onClick={() => emergencyAlert(app)}
                           className="bg-red-600 text-white py-2 rounded-lg"
@@ -601,7 +610,7 @@ const toNumberOrNull = (v: unknown): number | null => {
                         >
                           शिफ्ट समाप्त करें 🛑
                         </button>
-                      </>
+                      </div>
                     )}
                   </div>
                 )}

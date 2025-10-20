@@ -14,6 +14,8 @@ type Job = {
   description: string;
 };
 
+type ShiftStatusRow = { status: ShiftLog["status"] | null };
+
 type Application = {
   id: string;
   status: "pending" | "accepted" | "rejected";
@@ -455,7 +457,7 @@ export default function MyApplicationsPage() {
         .limit(1)
         .single();
 
-      const shiftStatus = (shiftCheck as any)?.status ?? (shiftForApp ? shiftForApp.status : null);
+      const shiftStatus = (shiftCheck as ShiftStatusRow | null)?.status ?? (shiftForApp ? shiftForApp.status : null);
       if (shiftStatus === "completed") {
         setCompletedApps((prev) => ({ ...prev, [app.id]: true }));
       } else {

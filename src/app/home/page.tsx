@@ -217,44 +217,54 @@ export default function HomePage() {
   };
 
   // resolve wage for app (fallbacks)
-  const resolveWageForApp = (app: Application, jobObj?: Job): number | null => {
-    const c = parseWage((app as any).contractor_wage);
-    if (c != null) return c;
+  // old:
+// const c = parseWage((app as any).contractor_wage);
+// const o = parseWage((app as any).offered_wage);
+// const jraw = (jobObj as any).wage;
 
-    const o = parseWage((app as any).offered_wage);
-    if (o != null) return o;
+// replace with:
+const resolveWageForApp = (app: Application, jobObj?: Job): number | null => {
+  const c = parseWage(app.contractor_wage);
+  if (c != null) return c;
 
-    if (jobObj) {
-      const jraw = (jobObj as any).wage;
-      const j = typeof jraw === "number" ? jraw : parseWage(jraw);
-      if (j != null) return j;
-    }
+  const o = parseWage(app.offered_wage);
+  if (o != null) return o;
 
-    const w = workerWageMap[app.worker_id];
-    if (w != null) return w;
+  if (jobObj) {
+    const jraw = jobObj.wage;
+    const j = typeof jraw === "number" ? jraw : parseWage(jraw);
+    if (j != null) return j;
+  }
 
-    console.warn("resolveWageForApp: no wage found", {
-      appId: app.id,
-      contractor_wage: app.contractor_wage,
-      offered_wage: app.offered_wage,
-      jobId: app.job_id,
-      jobObjWage: jobObj?.wage,
-      workerProfileWage: workerWageMap[app.worker_id]
-    });
-    return null;
-  };
+  const w = workerWageMap[app.worker_id];
+  if (w != null) return w;
 
-  const parseWage = (val: any): number | null => {
-    if (val == null) return null;
-    if (typeof val === "number" && Number.isFinite(val)) return val;
-    const s = String(val).trim();
-    if (s === "") return null;
-    const cleaned = s.replace(/[^\d.-]/g, "");
-    if (cleaned === "" || cleaned === "-" || cleaned === ".") return null;
-    const n = Number(cleaned);
-    if (!Number.isFinite(n)) return null;
-    return n > 0 ? n : (n === 0 ? 0 : null);
-  };
+  console.warn("resolveWageForApp: no wage found", {
+    appId: app.id,
+    contractor_wage: app.contractor_wage,
+    offered_wage: app.offered_wage,
+    jobId: app.job_id,
+    jobObjWage: jobObj?.wage,
+    workerProfileWage: workerWageMap[app.worker_id]
+  });
+  return null;
+};
+
+
+  // old: const parseWage = (val: any): number | null => { ... }
+// replace with:
+const parseWage = (val: string | number | null | undefined): number | null => {
+  if (val == null) return null;
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  const s = String(val).trim();
+  if (s === "") return null;
+  const cleaned = s.replace(/[^\d.-]/g, "");
+  if (cleaned === "" || cleaned === "-" || cleaned === ".") return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return n > 0 ? n : (n === 0 ? 0 : null);
+};
+
 
   // Contractor → Applications + join shift_logs + pending OTPs
   // NOTE: added logic to automatically hide "job done" applications on reload:
@@ -320,8 +330,10 @@ export default function HomePage() {
           console.error("fetch jobs by ids error", jobsErr);
         } else {
           ((jobsData as Job[]) || []).forEach((j) => {
-            jobsDataById[j.id] = { ...j, wage: parseWage((j as any).wage) } as Job;
-          });
+  // parseWage returns number|null — keep Job.wage as number|string|null
+  const wageNum = parseWage(j.wage);
+  jobsDataById[j.id] = { ...(j as Job), wage: wageNum } as Job;
+});
         }
       }
 
@@ -367,16 +379,17 @@ export default function HomePage() {
         );
 
         const contractorWageNum = parseWage(a.contractor_wage);
-        const offeredWageNum = parseWage(a.offered_wage);
-        const jobWageNum = job ? parseWage(job.wage) : null;
+const offeredWageNum = parseWage(a.offered_wage);
+const jobWageNum = job ? parseWage(job.wage) : null;
 
-        const finalApp: Application = {
-          ...a,
-          contractor_wage: contractorWageNum,
-          offered_wage: offeredWageNum,
-          jobs: job ? [{ ...job, wage: jobWageNum }] : [],
-          shiftstatus: shift?.status || null,
-        };
+const finalApp: Application = {
+  ...a,
+  contractor_wage: contractorWageNum,
+  offered_wage: offeredWageNum,
+  jobs: job ? [{ ...job, wage: jobWageNum }] : [],
+  shiftstatus: shift?.status || null,
+};
+
 
         return finalApp;
       });

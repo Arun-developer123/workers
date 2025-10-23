@@ -12,23 +12,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
+        {/* Viewport for mobile responsiveness */}
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+
         {/* PWA manifest */}
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#0ea5a4" />
 
-        {/* iOS */}
+        {/* iOS support */}
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="KaamLink" />
-
-        {/* Optional: noindex for staging */}
-        {/* <meta name="robots" content="noindex,nofollow" /> */}
       </head>
-      <body>
-        <main style={{ maxWidth: 900, margin: "0 auto", padding: 20 }}>{children}</main>
 
-        {/* PWA registration + install prompt (client component) */}
+      <body>
+        {/* Main container with responsive width */}
+        <main className="mx-auto max-w-[900px] p-4">{children}</main>
+
+        {/* PWA registration */}
         <PwaRegister />
       </body>
     </html>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
+import { FaShoppingCart, FaCar } from "react-icons/fa";
 
 // ==== Types ====
 interface Profile {
@@ -663,13 +664,34 @@ const finalApp: Application = {
 
       {/* Worker Dashboard */}
       {profile.role === "worker" && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold flex items-center gap-2">Worker Dashboard <AudioButton text="वर्कर डैशबोर्ड देखें" /></h2>
-            <div className="flex gap-2">
-              <button onClick={() => router.push("/applications")} className="bg-blue-50 border border-blue-200 text-blue-700 py-2 px-3 rounded-lg">मेरे आवेदन 📄</button>
-            </div>
-          </div>
+  <div className="mb-8">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-xl font-semibold flex items-center gap-2">Worker Dashboard <AudioButton text="वर्कर डैशबोर्ड देखें" /></h2>
+
+      {/* --- ADD QUICK ACTION ICONS HERE --- */}
+      <div className="flex items-center gap-3">
+        {/* Svari (shared auto) */}
+        <button
+          onClick={() => router.push("/svari")}
+          title="Svari — Shared Auto booking"
+          className="flex items-center gap-2 bg-black text-white px-3 py-2 rounded-lg shadow hover:opacity-90"
+        >
+          <FaCar /> <span className="hidden sm:inline">Svari</span>
+        </button>
+
+        {/* Shopping (tools & safety) */}
+        <button
+          onClick={() => router.push("/shop")}
+          title="Shop — Buy tools & safety gear"
+          className="flex items-center gap-2 bg-green-600 text-white px-3 py-2 rounded-lg shadow hover:opacity-90"
+        >
+          <FaShoppingCart /> <span className="hidden sm:inline">Shop</span>
+        </button>
+
+        {/* Existing button(s) preserved */}
+        <button onClick={() => router.push("/applications")} className="bg-blue-50 border border-blue-200 text-blue-700 py-2 px-3 rounded-lg">मेरे आवेदन 📄</button>
+      </div>
+    </div>
 
           <div className="bg-gradient-to-br from-white/80 to-white/60 rounded-xl p-4 shadow">
             <p className="mb-4">⭐ रेटिंग: <span className="font-bold">{myRating ? myRating : "अभी कोई रेटिंग नहीं"}</span></p>
@@ -716,15 +738,15 @@ const finalApp: Application = {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
             <div className="flex gap-2 items-center">
-              <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
+  <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
+  <button onClick={() => router.push("/workers")} className="bg-yellow-400 text-white py-2 px-3 rounded-lg">Workers देखें 👥</button>
 
-              <button
-                onClick={() => router.push("/workers")}
-                className="bg-yellow-400 text-white py-2 px-3 rounded-lg"
-              >
-                Workers देखें 👥
-              </button>
-            </div>
+  {/* Materials order (new) */}
+  <button onClick={() => router.push("/contractor/materials")} className="bg-indigo-600 text-white py-2 px-3 rounded-lg flex items-center gap-2">
+    {/* simple SVG or icon */}
+    🧱 <span className="hidden sm:inline">Materials</span>
+  </button>
+</div>
           </div>
 
           {applications.length === 0 ? (

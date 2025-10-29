@@ -28,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
       <body>
         {/* Main container with responsive width */}
-        <main className="mx-auto max-w-[px] p-4">{children}</main>
+        <main className="mx-auto max-w-[px 900] p-4">{children}</main>
 
         {/* PWA registration */}
         <PwaRegister />

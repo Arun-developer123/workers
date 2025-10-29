@@ -8,6 +8,7 @@ import { FaShoppingCart, FaCar } from "react-icons/fa";
 
 // ==== Types ====
 interface Profile {
+  occupation: string;
   user_id: string;
   name: string;
   role: "worker" | "contractor";
@@ -78,6 +79,10 @@ export default function HomePage() {
   const [expandedJobs, setExpandedJobs] = useState<{ [jobId: string]: boolean }>({});
   const [completedApps, setCompletedApps] = useState<{ [appId: string]: boolean }>({});
   const [pendingOtpsMap, setPendingOtpsMap] = useState<{ [applicationId: string]: OtpRow[] }>({});
+  // ---- add: for switching between profiles that share same phone ----
+  const [samePhoneProfiles, setSamePhoneProfiles] = useState<Profile[] | null>(null);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [profilesModalOpen, setProfilesModalOpen] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -105,6 +110,106 @@ export default function HomePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  
+useEffect(() => {
+  const onProfileChanged = (ev: Event) => {
+    try {
+      // @ts-ignore - CustomEvent generic
+      const newProfile: Profile = (ev as CustomEvent).detail;
+      if (!newProfile) return;
+
+      // update state and re-run fetches
+      setProfile(newProfile);
+      // fetch fresh image & rating & data based on role
+      fetchProfileImage(newProfile.user_id).catch(() => {});
+      fetchMyRating(newProfile.user_id).catch(() => {});
+      if (newProfile.role === "worker") {
+        fetchJobs().catch(() => {});
+      } else {
+        fetchContractorData(newProfile.user_id).catch(() => {});
+        fetchJobsForContractor(newProfile.user_id).catch(() => {});
+      }
+    } catch (err) {
+      console.error("onProfileChanged handler error", err);
+    }
+  };
+
+  window.addEventListener("fake_profile_changed", onProfileChanged);
+
+  return () => {
+    window.removeEventListener("fake_profile_changed", onProfileChanged);
+  };
+}, []);
+
+
+   // fetch all profiles that share the same phone number as the current profile
+  const fetchProfilesWithSamePhone = async () => {
+    try {
+      // try to get phone from in-memory profile (localStorage)
+      let phoneToQuery = profile?.phone;
+
+      // if not present, attempt to fetch it from DB for current user ID
+      if (!phoneToQuery && profile?.user_id) {
+        const { data: profRow, error: pErr } = await supabase
+          .from("profiles")
+          .select("phone")
+          .eq("user_id", profile.user_id)
+          .single();
+        if (!pErr && profRow) {
+          phoneToQuery = (profRow as any).phone;
+        }
+      }
+
+      if (!phoneToQuery) {
+        alert("इस प्रोफ़ाइल का फोन नंबर उपलब्ध नहीं है।");
+        return;
+      }
+
+      setProfilesLoading(true);
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("phone", phoneToQuery);
+
+      if (error) {
+        console.error("fetchProfilesWithSamePhone error", error);
+        alert("Profiles लाने में समस्या आई — console देखें");
+        setProfilesLoading(false);
+        return;
+      }
+      setSamePhoneProfiles((data as Profile[]) || []);
+      setProfilesModalOpen(true);
+      setProfilesLoading(false);
+    } catch (err) {
+      console.error("fetchProfilesWithSamePhone unexpected", err);
+      setProfilesLoading(false);
+      alert("Profiles लाने में गड़बड़।");
+    }
+  };
+
+  // when user chooses a profile from the list, store it (same as sign-in) and redirect
+const switchToProfile = (p: Profile) => {
+  // save selected profile
+  localStorage.setItem("fake_user_profile", JSON.stringify(p));
+
+  // close modal UI
+  setProfilesModalOpen(false);
+  setSamePhoneProfiles(null);
+
+  // dispatch event so HomePage will pick up new profile without reload
+  try {
+    window.dispatchEvent(new CustomEvent("fake_profile_changed", { detail: p }));
+  } catch (e) {
+    // fallback
+    console.warn("event dispatch failed", e);
+  }
+
+  // if not already on /home navigate there (optional)
+  if (typeof window !== "undefined" && window.location.pathname !== "/home") {
+    router.push("/home");
+  }
+};
+
 
   // fetch profile image URL
   const fetchProfileImage = async (userId: string) => {
@@ -624,20 +729,93 @@ const finalApp: Application = {
               <div className="text-xs opacity-90">Role</div>
               <div className="font-bold text-lg">{profile.role.toUpperCase()}</div>
             </div>
-            {profileImageUrl ? (
-              <img
-                src={profileImageUrl}
-                alt="profile"
-                className="w-14 h-14 rounded-full object-cover border-2 border-white"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center font-semibold">
-                {profile.name ? profile.name[0] : "U"}
-              </div>
-            )}
+            {/* clickable profile image — shows other profiles with same phone */}
+<button
+  type="button"
+  onClick={(e) => {
+    e.stopPropagation();
+    // open modal — fetch profiles with same phone
+    fetchProfilesWithSamePhone();
+  }}
+  className="focus:outline-none"
+  title="इसी नंबर के अन्य profiles देखें"
+>
+  {profileImageUrl ? (
+    <img
+      src={profileImageUrl}
+      alt="profile"
+      className="w-14 h-14 rounded-full object-cover border-2 border-white shadow-sm"
+    />
+  ) : (
+    <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center font-semibold">
+      {profile.name ? profile.name[0] : "U"}
+    </div>
+  )}
+</button>
+
           </div>
         </div>
       </div>
+      {/* ---------------- Profiles modal (shows when profilesModalOpen is true) ---------------- */}
+{profilesModalOpen && (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    onClick={() => {
+      setProfilesModalOpen(false);
+      setSamePhoneProfiles(null);
+    }}
+  >
+    <div
+      className="w-full max-w-md bg-white rounded-2xl shadow-xl p-4 ring-1 ring-gray-200 text-gray-900"
+      onClick={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-lg font-semibold text-gray-900">इस नंबर के profiles</h3>
+        <button
+          className="text-sm text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+          onClick={() => { setProfilesModalOpen(false); setSamePhoneProfiles(null); }}
+        >
+          बंद करें
+        </button>
+      </div>
+
+      {profilesLoading ? (
+        <div className="py-6 text-center text-gray-700">लॉड कर रहे हैं...</div>
+      ) : !samePhoneProfiles || samePhoneProfiles.length === 0 ? (
+        <div className="py-6 text-center text-gray-600">कोई अन्य प्रोफ़ाइल नहीं मिली</div>
+      ) : (
+        <div className="space-y-2 max-h-72 overflow-auto">
+          {samePhoneProfiles.map((p) => (
+            <button
+              key={p.user_id}
+              onClick={() => switchToProfile(p)}
+              className="w-full flex items-center gap-3 p-2 border rounded-lg hover:shadow-sm text-left bg-white text-gray-900"
+            >
+              <img
+                src={p.profile_image_url ?? "/default-avatar.png"}
+                alt={p.name ?? "profile"}
+                className="w-11 h-11 rounded-full object-cover"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/default-avatar.png"; }}
+              />
+              <div className="flex-1">
+                <div className="font-semibold text-gray-900">{p.name ?? "नाम उपलब्ध नहीं"}</div>
+                <div className="text-sm text-gray-600">{p.role ?? p.occupation ?? "रोल उपलब्ध नहीं"}</div>
+              </div>
+              <div className="text-sm text-gray-400">खोलें →</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 text-xs text-gray-500">
+        नोट: यहाँ क्लिक करने पर selected profile के रूप में localStorage में सेट होगा और आप redirect हो जाएंगे।
+      </div>
+    </div>
+  </div>
+)}
+
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">

@@ -137,52 +137,115 @@ export default function MyApplicationsPage() {
             // coerce to number|null safely instead of casting to any
             offered_wage: toNumberOrNull((app as unknown as { offered_wage?: unknown }).offered_wage),
             contractor_wage: toNumberOrNull((app as unknown as { contractor_wage?: unknown }).contractor_wage),
+            // will fill contractorPhone from profiles table below
+            contractorPhone: null,
           } as Application;
         });
 
-        setApplications(parsedApplications);
+        // --- fetch phones from `profiles` table (your schema shows phone in profiles.user_id) ---
+        const contractorIds = Array.from(
+          new Set(parsedApplications.map((a) => a.contractor_id).filter(Boolean))
+        );
 
-        // --- New: fetch shift_logs and ratings for the fetched applications so we can show "Job Done" ---
-        const jobIds = Array.from(new Set(parsedApplications.map((a) => a.job_id).filter(Boolean)));
-        // fetch shift_logs for this worker across these jobs
-        const { data: shiftsData, error: shiftsErr } = await supabase
-          .from("shift_logs")
-          .select("*")
-          .in("job_id", jobIds)
-          .eq("worker_id", profile.user_id);
+        let appsWithPhone: Application[] = parsedApplications;
 
-        if (shiftsErr) {
-          console.error("fetch shifts error", shiftsErr);
+        if (contractorIds.length > 0) {
+          try {
+            const { data: profilesData, error: profilesErr } = await supabase
+              .from("profiles")
+              .select("user_id, phone")
+              .in("user_id", contractorIds);
+
+            if (profilesErr) {
+              // verbose logging to help identify RLS / permission / schema issues
+              console.error("fetch profiles error:", profilesErr);
+              console.error(
+                "profilesErr (stringified):",
+                JSON.stringify(profilesErr, Object.getOwnPropertyNames(profilesErr))
+              );
+              // fallback to leaving phones null
+              appsWithPhone = parsedApplications;
+            } else {
+              const phoneMap: { [userId: string]: string | null } = {};
+              (profilesData || []).forEach((p: any) => {
+                // profiles table uses user_id as PK per your schema
+                phoneMap[p.user_id] = p.phone ?? null;
+              });
+
+              appsWithPhone = parsedApplications.map((app) => ({
+                ...app,
+                contractorPhone: phoneMap[app.contractor_id] ?? null,
+              }));
+            }
+          } catch (fetchErr) {
+            console.error("unexpected error fetching profiles:", fetchErr);
+            appsWithPhone = parsedApplications;
+          }
         }
 
-        const shifts = (shiftsData || []) as ShiftLog[];
+        // set applications (with phone merged where available)
+        setApplications(appsWithPhone);
+
+        // --- fetch shift_logs and ratings for the fetched applications so we can show "Job Done" ---
+        const jobIds = Array.from(new Set(appsWithPhone.map((a) => a.job_id).filter(Boolean)));
+
+        // fetch shift_logs for this worker across these jobs (only if jobIds not empty)
+        let shifts: ShiftLog[] = [];
+        if (jobIds.length > 0) {
+          const { data: shiftsData, error: shiftsErr } = await supabase
+            .from("shift_logs")
+            .select("*")
+            .in("job_id", jobIds)
+            .eq("worker_id", profile.user_id);
+
+          if (shiftsErr) {
+            console.error("fetch shifts error", shiftsErr);
+          } else {
+            shifts = (shiftsData || []) as ShiftLog[];
+          }
+        }
 
         // Map shifts to applications by matching job_id + contractor_id
+        // IMPORTANT: only treat a shift as "active" if its status === 'ongoing' and pick the latest ongoing shift
         const activeShiftMap: ActiveShifts = {};
-        parsedApplications.forEach((app) => {
-          const found = shifts.find(
-            (s) => s.job_id === app.job_id && s.contractor_id === app.contractor_id && s.worker_id === profile.user_id
-          );
-          activeShiftMap[app.id] = found ?? null;
+        appsWithPhone.forEach((app) => {
+          const related = shifts
+            .filter((s) => s.job_id === app.job_id && s.contractor_id === app.contractor_id && s.worker_id === profile.user_id)
+            .sort((a, b) => {
+              const ta = a.start_time ? new Date(a.start_time).getTime() : 0;
+              const tb = b.start_time ? new Date(b.start_time).getTime() : 0;
+              return tb - ta;
+            });
+
+          const latest = related[0] ?? null;
+          activeShiftMap[app.id] = latest && latest.status === "ongoing" ? latest : null;
         });
+
+        // debug: show what we found
+        // eslint-disable-next-line no-console
+        console.debug("activeShiftMap:", activeShiftMap);
+
         setActiveShift(activeShiftMap);
 
         // fetch ratings already submitted BY THIS WORKER for these jobs -> so we know if rating exists
-        const { data: ratingsData, error: ratingsErr } = await supabase
-          .from("ratings")
-          .select("id, job_id, rater_id")
-          .in("job_id", jobIds)
-          .eq("rater_id", profile.user_id);
+        let ratings: { id: string; job_id: string; rater_id: string }[] = [];
+        if (jobIds.length > 0) {
+          const { data: ratingsData, error: ratingsErr } = await supabase
+            .from("ratings")
+            .select("id, job_id, rater_id")
+            .in("job_id", jobIds)
+            .eq("rater_id", profile.user_id);
 
-        if (ratingsErr) {
-          console.error("fetch ratings error", ratingsErr);
+          if (ratingsErr) {
+            console.error("fetch ratings error", ratingsErr);
+          } else {
+            ratings = (ratingsData || []) as { id: string; job_id: string; rater_id: string }[];
+          }
         }
-
-        const ratings = (ratingsData || []) as { id: string; job_id: string; rater_id: string }[];
 
         // Build ratingsGiven map keyed by application id (if this worker has rated that job)
         const ratingsMap: { [appId: string]: boolean } = {};
-        parsedApplications.forEach((app) => {
+        appsWithPhone.forEach((app) => {
           const hasRated = ratings.some((r) => r.job_id === app.job_id);
           ratingsMap[app.id] = !!hasRated;
         });
@@ -190,7 +253,7 @@ export default function MyApplicationsPage() {
 
         // Build completedApps: shift completed && rating present
         const completedMap: { [appId: string]: boolean } = {};
-        parsedApplications.forEach((app) => {
+        appsWithPhone.forEach((app) => {
           const shift = activeShiftMap[app.id];
           const shiftCompleted = !!shift && shift.status === "completed";
           completedMap[app.id] = shiftCompleted && !!ratingsMap[app.id];
@@ -213,36 +276,46 @@ export default function MyApplicationsPage() {
   };
 
   // Create OTP record in DB (shift_otps) for contractor to see on their dashboard.
-  const createOtpRecord = async (payload: {
-    application_id: string;
-    contractor_id: string;
-    worker_id: string;
-    job_id: string;
-    type: "start" | "end";
-  }) => {
-    const code = generateOtpCode();
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 5).toISOString(); // 5 minutes
-    const { data, error } = await supabase
-      .from("shift_otps")
-      .insert({
-        application_id: payload.application_id,
-        contractor_id: payload.contractor_id,
-        worker_id: payload.worker_id,
-        job_id: payload.job_id,
-        otp_code: code,
-        type: payload.type,
-        expires_at: expiresAt,
-        used: false,
-      })
-      .select()
-      .single();
+  // (applications page) replace createOtpRecord with this (or add the debug lines)
+const createOtpRecord = async (payload: {
+  application_id: string;
+  contractor_id: string;
+  worker_id: string;
+  job_id: string;
+  type: "start" | "end";
+}) => {
+  const code = generateOtpCode();
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 5).toISOString(); // 5 minutes
+  const { data, error } = await supabase
+    .from("shift_otps")
+    .insert({
+      application_id: payload.application_id,
+      contractor_id: payload.contractor_id,
+      worker_id: payload.worker_id,
+      job_id: payload.job_id,
+      otp_code: code,
+      type: payload.type,
+      expires_at: expiresAt,
+      used: false,
+    })
+    .select()
+    .single();
 
-    if (error) {
-      console.error("createOtpRecord error", error);
-      return null;
-    }
-    return data;
-  };
+  if (error) {
+    console.error("createOtpRecord error", error);
+    return null;
+  }
+
+  // DEBUG: show inserted row and the exact contractor_id used
+  console.debug("createOtpRecord inserted", {
+    inserted: data,
+    contractor_id_sent: payload.contractor_id,
+    expiresAt,
+  });
+
+  return data;
+};
+
 
   // Validate OTP for a given application and type
   const validateOtp = async (applicationId: string, code: string, type: "start" | "end") => {
@@ -306,7 +379,7 @@ export default function MyApplicationsPage() {
     );
 
     // Prompt worker to enter OTP provided by contractor
-    const entered = prompt("कृपया contractor द्वारा दिया गया START OTP दर्ज کریں:");
+    const entered = prompt("कृपया contractor द्वारा दिया गया START OTP दर्ज करें:");
     if (!entered) {
       alert("❌ OTP दर्ज नहीं किया गया");
       return;
@@ -419,7 +492,7 @@ export default function MyApplicationsPage() {
       setShowRatingForm(app.id);
     } catch (err) {
       console.error("endShift unexpected", err);
-      alert("❌ शिफ्ट समाप्त करने में समस्या");
+      alert("❌ शिफ्ट समाप्त करने میں समस्या");
     }
   };
 
@@ -513,7 +586,7 @@ export default function MyApplicationsPage() {
 
                   return (
                     <p>
-                      मज़दूरी:{" "}
+                      मज़दूरी: {" "}
                       {useVal != null ? `₹${Math.round(useVal)}` : "—"}
                     </p>
                   );
@@ -523,32 +596,36 @@ export default function MyApplicationsPage() {
                   विवरण: {app.jobs?.description || "—"}
                 </p>
                 <p className="font-semibold">
-                  स्थिति:{" "}
+                  स्थिति: {" "}
                   {app.status === "pending" && "⏳ प्रतीक्षा में"}
                   {app.status === "accepted" && "✅ स्वीकृत"}
                   {app.status === "rejected" && "❌ अस्वीकृत"}
                 </p>
 
-                {app.status === "accepted" && app.contractorPhone && (
+                {app.status === "accepted" && (
                   <div className="flex flex-col gap-2 mt-2">
-                    <div className="flex gap-2">
-                      <a
-                        href={`tel:${app.contractorPhone}`}
-                        className="flex-1 bg-green-600 text-white py-2 rounded-lg text-center"
-                      >
-                        कॉल करें 📞
-                      </a>
-                      <a
-                        href={`https://wa.me/${app.contractorPhone.replace(/\D/g, "")}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-center"
-                      >
-                        चैट करें 💬
-                      </a>
-                    </div>
+                    {/* phone links only if available */}
+                    {app.contractorPhone && (
+                      <div className="flex gap-2">
+                        <a
+                          href={`tel:${app.contractorPhone}`}
+                          className="flex-1 bg-green-600 text-white py-2 rounded-lg text-center"
+                        >
+                          कॉल करें 📞
+                        </a>
+                        <a
+                          href={`https://wa.me/${app.contractorPhone.replace(/\D/g, "")}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-center"
+                        >
+                          चैट करें 💬
+                        </a>
+                      </div>
+                    )}
 
-                    {!shift ? (
+                    {/* show Start if there is NO ongoing shift for this app */}
+                    {(!shift || shift.status !== "ongoing") ? (
                       <>
                         {!isRatingVisible && (
                           <button

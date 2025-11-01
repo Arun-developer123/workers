@@ -2,41 +2,45 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 export default function RefreshButton() {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [loading, setLoading] = useState<boolean>(false);
 
   const handleRefresh = async () => {
     setLoading(true);
 
     try {
+      // typed shallow view of router methods we may call
       const maybeRouter = router as unknown as {
-        refresh?: unknown;
-        replace?: unknown;
+        refresh?: () => void;
+        replace?: (url: string) => void;
       };
 
+      // 1) Preferred: use router.refresh() if available (revalidates server components)
       if (typeof maybeRouter.refresh === "function") {
-        (maybeRouter.refresh as () => void)();
+        maybeRouter.refresh();
+        // show small loading for UX
         setTimeout(() => setLoading(false), 350);
         return;
       }
 
+      // 2) Full reload fallback (works everywhere)
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         window.location.reload();
         return;
       }
 
-      const sp = searchParams ? (searchParams.toString() ? `?${searchParams.toString()}` : "") : "";
-      const url = `${pathname ?? "/"}${sp}`;
-
-      if (typeof maybeRouter.replace === "function") {
-        (maybeRouter.replace as (url: string) => void)(url);
-        setTimeout(() => setLoading(false), 350);
-        return;
+      // 3) Fallback: use router.replace to same path constructed from window.location
+      // (router.replace is client-only; only run if exists)
+      if (typeof window !== "undefined") {
+        const url = `${window.location.pathname}${window.location.search || ""}${window.location.hash || ""}`;
+        if (typeof maybeRouter.replace === "function") {
+          maybeRouter.replace(url);
+          setTimeout(() => setLoading(false), 350);
+          return;
+        }
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -64,12 +68,12 @@ export default function RefreshButton() {
             fill="none"
             viewBox="0 0 24 24"
           >
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path
               className="opacity-75"
               fill="currentColor"
               d="M4 12a8 8 0 018-8v4l3-3-3-3v4a12 12 0 100 24 12 12 0 010-24z"
-            ></path>
+            />
           </svg>
           Refreshing…
         </>

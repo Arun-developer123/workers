@@ -66,6 +66,12 @@ type ShiftOtp = {
   used: boolean;
 };
 
+// Profile row type for safer typing (replaces `any`)
+type ProfileRow = {
+  user_id: string;
+  phone?: string | null;
+};
+
 export default function MyApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,8 +172,11 @@ export default function MyApplicationsPage() {
               // fallback to leaving phones null
               appsWithPhone = parsedApplications;
             } else {
+              // safely type the profiles result
+              const profiles = (profilesData || []) as ProfileRow[];
+
               const phoneMap: { [userId: string]: string | null } = {};
-              (profilesData || []).forEach((p: any) => {
+              profiles.forEach((p) => {
                 // profiles table uses user_id as PK per your schema
                 phoneMap[p.user_id] = p.phone ?? null;
               });
@@ -277,45 +286,44 @@ export default function MyApplicationsPage() {
 
   // Create OTP record in DB (shift_otps) for contractor to see on their dashboard.
   // (applications page) replace createOtpRecord with this (or add the debug lines)
-const createOtpRecord = async (payload: {
-  application_id: string;
-  contractor_id: string;
-  worker_id: string;
-  job_id: string;
-  type: "start" | "end";
-}) => {
-  const code = generateOtpCode();
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 5).toISOString(); // 5 minutes
-  const { data, error } = await supabase
-    .from("shift_otps")
-    .insert({
-      application_id: payload.application_id,
-      contractor_id: payload.contractor_id,
-      worker_id: payload.worker_id,
-      job_id: payload.job_id,
-      otp_code: code,
-      type: payload.type,
-      expires_at: expiresAt,
-      used: false,
-    })
-    .select()
-    .single();
+  const createOtpRecord = async (payload: {
+    application_id: string;
+    contractor_id: string;
+    worker_id: string;
+    job_id: string;
+    type: "start" | "end";
+  }) => {
+    const code = generateOtpCode();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 5).toISOString(); // 5 minutes
+    const { data, error } = await supabase
+      .from("shift_otps")
+      .insert({
+        application_id: payload.application_id,
+        contractor_id: payload.contractor_id,
+        worker_id: payload.worker_id,
+        job_id: payload.job_id,
+        otp_code: code,
+        type: payload.type,
+        expires_at: expiresAt,
+        used: false,
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error("createOtpRecord error", error);
-    return null;
-  }
+    if (error) {
+      console.error("createOtpRecord error", error);
+      return null;
+    }
 
-  // DEBUG: show inserted row and the exact contractor_id used
-  console.debug("createOtpRecord inserted", {
-    inserted: data,
-    contractor_id_sent: payload.contractor_id,
-    expiresAt,
-  });
+    // DEBUG: show inserted row and the exact contractor_id used
+    console.debug("createOtpRecord inserted", {
+      inserted: data,
+      contractor_id_sent: payload.contractor_id,
+      expiresAt,
+    });
 
-  return data;
-};
-
+    return data;
+  };
 
   // Validate OTP for a given application and type
   const validateOtp = async (applicationId: string, code: string, type: "start" | "end") => {

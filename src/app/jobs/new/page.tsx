@@ -51,6 +51,67 @@ const OCCUPATIONS: { value: string; label: string; pricingOptions: PricingOption
       { value: "per_piece", label: "प्रति यूनिट", unitHint: "piece" },
     ],
   },
+
+  // --- Newly added occupation entries requested by user ---
+  {
+    value: "gardener",
+    label: "माली / बागवान (Gardener)",
+    pricingOptions: [
+      { value: "per_hour", label: "प्रति घंटा", unitHint: "hour" },
+      { value: "per_day", label: "प्रति दिन", unitHint: "day" },
+      { value: "per_job", label: "प्रति काम / प्रोजेक्ट", unitHint: "job" },
+    ],
+  },
+  {
+    value: "helper",
+    label: "हेल्पर / मजदूर (Helper)",
+    pricingOptions: [
+      { value: "per_day", label: "प्रति दिन", unitHint: "day" },
+      { value: "per_hour", label: "प्रति घंटा", unitHint: "hour" },
+    ],
+  },
+  {
+    value: "kabadi",
+    label: "कबाड़ी / स्क्रैप कलेक्टर (Kabadi)",
+    pricingOptions: [
+      { value: "per_kg", label: "प्रति किलो", unitHint: "kg" },
+      { value: "per_trip", label: "प्रति ट्रिप", unitHint: "trip" },
+      { value: "per_job", label: "प्रति काम", unitHint: "job" },
+    ],
+  },
+  {
+    value: "clothes_ironer",
+    label: "कपड़े प्रेस करने वाला (Clothes Ironer)",
+    pricingOptions: [
+      { value: "per_piece", label: "प्रति पीस", unitHint: "piece" },
+      { value: "per_kg", label: "प्रति किलो (जब घर पर बैच में)", unitHint: "kg" },
+    ],
+  },
+  {
+    value: "locksmith",
+    label: "ताले/चाबी वाला (Locksmith)",
+    pricingOptions: [
+      { value: "per_job", label: "प्रति काम (आउटेज/काटना/फिक्स)", unitHint: "job" },
+      { value: "per_hour", label: "प्रति घंटा", unitHint: "hour" },
+    ],
+  },
+  {
+    value: "shoe_polisher",
+    label: "जूता पॉलिश / शू शाइनर (Shoe Polisher)",
+    pricingOptions: [
+      { value: "per_pair", label: "प्रति जोड़ी", unitHint: "pair" },
+      { value: "per_shoe", label: "प्रति जूता", unitHint: "shoe" },
+    ],
+  },
+  {
+    value: "tailor",
+    label: "दरजी / सिलाई (Tailor)",
+    pricingOptions: [
+      { value: "per_piece", label: "प्रति आइटम (शर्ट/पेंट)", unitHint: "piece" },
+      { value: "per_meter", label: "प्रति मीटर (कपड़ा/हेम)", unitHint: "meter" },
+      { value: "per_job", label: "प्रति काम (कस्टम)", unitHint: "job" },
+    ],
+  },
 ];
 
 function nearestMultiple(value: number, multiple: number) {
@@ -166,9 +227,9 @@ export default function NewJobPage() {
   const [defaultRate, setDefaultRate] = useState<number | null>(null);
   const [defaultRateLoading, setDefaultRateLoading] = useState(false);
   // new — store metadata & extra fields returned from pricing_defaults
-const [defaultMeta, setDefaultMeta] = useState<Record<string, unknown> | null>(null);
-const [defaultCurrency, setDefaultCurrency] = useState<string | null>(null);
-const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
+  const [defaultMeta, setDefaultMeta] = useState<Record<string, unknown> | null>(null);
+  const [defaultCurrency, setDefaultCurrency] = useState<string | null>(null);
+  const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
 
 
   const router = useRouter();
@@ -367,40 +428,39 @@ const [defaultUnitHint, setDefaultUnitHint] = useState<string | null>(null);
 
 
         // inside fetchDefaultRate effect, replace handling of `data`
-const pricingRow = data as PricingDefaultRow | null;
+        const pricingRow = data as PricingDefaultRow | null;
 
-if (error) {
-  console.warn("Failed to fetch default rate:", error);
-  setDefaultRate(null);
-  setWage("");
-  setDefaultMeta(null);
-  setDefaultCurrency(null);
-  setDefaultUnitHint(null);
-} else if (pricingRow && pricingRow.rate != null) {
-  const r = Number(pricingRow.rate);
-  if (!isNaN(r)) {
-    setDefaultRate(r);
-    setWage(String(r));
-    setDefaultCurrency(pricingRow.currency ?? "INR");
-    setDefaultUnitHint(pricingRow.unit_hint ?? null);
-    setDefaultMeta(pricingRow.metadata ?? null);
-  } else {
-    setDefaultRate(null);
-    setWage("");
-    setDefaultMeta(null);
-    setDefaultCurrency(null);
-    setDefaultUnitHint(null);
-  }
-} else {
-  // no default found
-  setDefaultRate(null);
-  setWage("");
-  setDefaultMeta(null);
-  setDefaultCurrency(null);
-  setDefaultUnitHint(null);
-}
-}
- finally {
+        if (error) {
+          console.warn("Failed to fetch default rate:", error);
+          setDefaultRate(null);
+          setWage("");
+          setDefaultMeta(null);
+          setDefaultCurrency(null);
+          setDefaultUnitHint(null);
+        } else if (pricingRow && pricingRow.rate != null) {
+          const r = Number(pricingRow.rate);
+          if (!isNaN(r)) {
+            setDefaultRate(r);
+            setWage(String(r));
+            setDefaultCurrency(pricingRow.currency ?? "INR");
+            setDefaultUnitHint(pricingRow.unit_hint ?? null);
+            setDefaultMeta(pricingRow.metadata ?? null);
+          } else {
+            setDefaultRate(null);
+            setWage("");
+            setDefaultMeta(null);
+            setDefaultCurrency(null);
+            setDefaultUnitHint(null);
+          }
+        } else {
+          // no default found
+          setDefaultRate(null);
+          setWage("");
+          setDefaultMeta(null);
+          setDefaultCurrency(null);
+          setDefaultUnitHint(null);
+        }
+      } finally {
         setDefaultRateLoading(false);
       }
     };
@@ -747,51 +807,51 @@ if (error) {
             className="border p-3 rounded text-lg bg-gray-100 text-gray-700 text-center"
           />
           <div className="text-xs text-gray-600 mt-1 text-center">
-  {defaultRateLoading ? (
-    "Default rate जांच रहे हैं..."
-  ) : defaultRate != null ? (
-    <>
-      <div>Default: <strong>₹{Number(defaultRate).toFixed(2)}</strong> per {defaultUnitHint ?? pricingBasis}</div>
-      <div className="mt-1">Currency: <strong>{defaultCurrency ?? "INR"}</strong></div>
+            {defaultRateLoading ? (
+              "Default rate जांच रहे हैं..."
+            ) : defaultRate != null ? (
+              <>
+                <div>Default: <strong>₹{Number(defaultRate).toFixed(2)}</strong> per {defaultUnitHint ?? pricingBasis}</div>
+                <div className="mt-1">Currency: <strong>{defaultCurrency ?? "INR"}</strong></div>
 
-      {/* metadata show — friendly list when available */}
-      {defaultMeta ? (
-  <div className="mt-2 text-left bg-white p-2 rounded text-xs shadow-sm">
-    {/* common keys (example): note, min_hours, source */}
-    {typeof defaultMeta["note"] === "string" && (
-      <div><strong>Note:</strong> {defaultMeta["note"]}</div>
-    )}
-    {typeof defaultMeta["source"] === "string" && (
-      <div><strong>Source:</strong> {defaultMeta["source"]}</div>
-    )}
-    {defaultMeta["min_hours"] != null && (
-      <div><strong>Min hours:</strong> {String(defaultMeta["min_hours"])}</div>
-    )}
-    {typeof defaultMeta["typical_job"] === "string" && (
-      <div><strong>Typical:</strong> {defaultMeta["typical_job"]}</div>
-    )}
+                {/* metadata show — friendly list when available */}
+                {defaultMeta ? (
+                  <div className="mt-2 text-left bg-white p-2 rounded text-xs shadow-sm">
+                    {/* common keys (example): note, min_hours, source */}
+                    {typeof defaultMeta["note"] === "string" && (
+                      <div><strong>Note:</strong> {defaultMeta["note"]}</div>
+                    )}
+                    {typeof defaultMeta["source"] === "string" && (
+                      <div><strong>Source:</strong> {defaultMeta["source"]}</div>
+                    )}
+                    {defaultMeta["min_hours"] != null && (
+                      <div><strong>Min hours:</strong> {String(defaultMeta["min_hours"])}</div>
+                    )}
+                    {typeof defaultMeta["typical_job"] === "string" && (
+                      <div><strong>Typical:</strong> {defaultMeta["typical_job"]}</div>
+                    )}
 
-    {/* fallback: show raw metadata if none of the above keys matched */}
-    {typeof defaultMeta["note"] !== "string" &&
-     typeof defaultMeta["source"] !== "string" &&
-     defaultMeta["min_hours"] == null &&
-     typeof defaultMeta["typical_job"] !== "string" && (
-      <div><strong>Info:</strong> {JSON.stringify(defaultMeta)}</div>
-    )}
-  </div>
-) : null}
+                    {/* fallback: show raw metadata if none of the above keys matched */}
+                    {typeof defaultMeta["note"] !== "string" &&
+                     typeof defaultMeta["source"] !== "string" &&
+                     defaultMeta["min_hours"] == null &&
+                     typeof defaultMeta["typical_job"] !== "string" && (
+                      <div><strong>Info:</strong> {JSON.stringify(defaultMeta)}</div>
+                    )}
+                  </div>
+                ) : null}
 
-    </>
-  ) : (
-    "Default rate उपलब्ध नहीं — ग्राहक edit नहीं कर सकता"
-  )}
-</div>
+              </>
+            ) : (
+              "Default rate उपलब्ध नहीं — ग्राहक edit नहीं कर सकता"
+            )}
+          </div>
 
         </div>
       </div>
 
       <label className="text-lg flex items-center gap-2">
-        Customer extras: Addons / Travel / Urgent
+        Customer extras: Addons / Travel / Urent
         <AudioButton text="एक्स्ट्रा सेट करें" />
       </label>
 

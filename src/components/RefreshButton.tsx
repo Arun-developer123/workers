@@ -14,27 +14,22 @@ export default function RefreshButton() {
     setLoading(true);
 
     try {
-      // create a typed view of router without using `any`
       const maybeRouter = router as unknown as {
         refresh?: unknown;
         replace?: unknown;
       };
 
-      // 1) If router.refresh exists, use it (revalidates server components)
       if (typeof maybeRouter.refresh === "function") {
         (maybeRouter.refresh as () => void)();
-        // show loading briefly for UX
         setTimeout(() => setLoading(false), 350);
         return;
       }
 
-      // 2) Fallback: full page reload
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         window.location.reload();
         return;
       }
 
-      // 3) Fallback: router.replace to same URL (no new history entry)
       const sp = searchParams ? (searchParams.toString() ? `?${searchParams.toString()}` : "") : "";
       const url = `${pathname ?? "/"}${sp}`;
 
@@ -44,7 +39,6 @@ export default function RefreshButton() {
         return;
       }
     } catch (err) {
-      // log and continue — ensure loading cleared
       // eslint-disable-next-line no-console
       console.error("Refresh failed:", err);
     } finally {

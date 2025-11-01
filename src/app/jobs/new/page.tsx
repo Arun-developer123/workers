@@ -195,18 +195,20 @@ export default function NewJobPage() {
   const [workersForOccupation, setWorkersForOccupation] = useState<WorkerEntry[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | "avg" | "">("");
   const [estimates, setEstimates] = useState<{
-    count: number;
-    usedRate: number | null;
-    rawLabor: number | null;
-    addonsTotal: number;
-    travelCharge: number;
-    urgentSurcharge: number;
-    subtotal: number | null;
-    serviceFee: number | null;
-    withFee: number | null;
-    rounded50: number | null;
-    rounded100: number | null;
-  } | null>(null);
+  count: number;
+  usedRate: number | null;
+  rawLabor: number | null;
+  addonsTotal: number;
+  travelCharge: number;
+  urgentSurcharge: number;
+  subtotal: number | null;
+  serviceFee: number | null;
+  // new fields
+  gst: number | null;
+  totalWithGst: number | null;
+  roundedTotal: number | null; // whole rupees (no paise)
+} | null>(null);
+
 
   // Add-ons + extra requirements
   const [addons, setAddons] = useState<Addon[]>([]);
@@ -545,21 +547,23 @@ export default function NewJobPage() {
       }
 
       if (usedRate === null) {
-        setEstimates({
-          count: workersForOccupation.filter((w) => typeof w.rate === "number").length,
-          usedRate: null,
-          rawLabor: null,
-          addonsTotal: 0,
-          travelCharge: 0,
-          urgentSurcharge: 0,
-          subtotal: null,
-          serviceFee: null,
-          withFee: null,
-          rounded50: null,
-          rounded100: null,
-        });
-        return;
-      }
+  setEstimates({
+    count: workersForOccupation.filter((w) => typeof w.rate === "number").length,
+    usedRate: null,
+    rawLabor: null,
+    addonsTotal: 0,
+    travelCharge: 0,
+    urgentSurcharge: 0,
+    subtotal: null,
+    serviceFee: null,
+    // new fields
+    gst: null,
+    totalWithGst: null,
+    roundedTotal: null,
+  });
+  return;
+}
+
 
       // labor
       const rawLabor = usedRate * units;
@@ -577,29 +581,36 @@ export default function NewJobPage() {
       const urgentSurcharge = urgent ? rawLabor * URGENT_SURCHARGE_PERCENT : 0;
 
       // subtotal before service fee
-      const subtotal = rawLabor + addonsTotal + travelCharge + urgentSurcharge;
+      // subtotal before service fee (same as before)
+const subtotal = rawLabor + addonsTotal + travelCharge + urgentSurcharge;
 
-      // platform service fee (10% of subtotal)
-      const serviceFee = subtotal * 0.1;
+// platform service fee (10% of subtotal)
+const serviceFee = subtotal * 0.1;
 
-      const withFee = subtotal + serviceFee;
+// GST: 18% on (subtotal + serviceFee)
+const gst = (subtotal + serviceFee) * 0.18;
 
-      const rounded50 = nearestMultiple(withFee, 50);
-      const rounded100 = nearestMultiple(withFee, 100);
+// total including GST
+const totalWithGst = subtotal + serviceFee + gst;
 
-      setEstimates({
-        count: workersForOccupation.filter((w) => typeof w.rate === "number").length,
-        usedRate,
-        rawLabor,
-        addonsTotal,
-        travelCharge,
-        urgentSurcharge,
-        subtotal,
-        serviceFee,
-        withFee,
-        rounded50,
-        rounded100,
-      });
+// round to whole rupees (no decimal paise shown)
+const roundedTotal = Math.round(totalWithGst);
+
+// set estimates with new fields
+setEstimates({
+  count: workersForOccupation.filter((w) => typeof w.rate === "number").length,
+  usedRate,
+  rawLabor,
+  addonsTotal,
+  travelCharge,
+  urgentSurcharge,
+  subtotal,
+  serviceFee,
+  gst,
+  totalWithGst,
+  roundedTotal,
+});
+
     };
 
     compute();
@@ -676,7 +687,8 @@ export default function NewJobPage() {
       return;
     }
 
-    const finalRounded = estimates.rounded50 ?? estimates.rounded100 ?? estimates.withFee ?? estimates.subtotal ?? 0;
+    const finalRounded = estimates?.roundedTotal ?? Math.round(estimates?.totalWithGst ?? estimates?.subtotal ?? 0);
+
 
     const insertObj: JobInsert = {
       contractor_id: contractorId,
@@ -694,8 +706,8 @@ export default function NewJobPage() {
       travel_charge: estimates.travelCharge ?? 0,
       urgent_surcharge: estimates.urgentSurcharge ?? 0,
       service_fee: estimates.serviceFee ?? null,
-      total_cost: estimates.withFee ?? null,
-      rounded_cost: finalRounded ?? null,
+      total_cost: estimates.totalWithGst ?? null,
+rounded_cost: finalRounded ?? null,
       extras: {
         addons,
         travel_km: Number(travelKm) || 0,
@@ -917,12 +929,18 @@ export default function NewJobPage() {
             <p>Travel charge: <strong>₹{Number(estimates.travelCharge ?? 0).toFixed(2)}</strong></p>
             {urgent && <p>Urgent surcharge: <strong>₹{Number(estimates.urgentSurcharge ?? 0).toFixed(2)}</strong></p>}
             <hr />
-            <p>Subtotal (before fee): <strong>₹{Number(estimates.subtotal ?? 0).toFixed(2)}</strong></p>
-            <p>Service fee (10%): <strong>₹{Number(estimates.serviceFee ?? 0).toFixed(2)}</strong></p>
-            <p className="text-lg">Total (with fee): <strong>₹{Number(estimates.withFee ?? 0).toFixed(2)}</strong></p>
-            <p>Rounded (nearest 50): <strong>₹{Number(estimates.rounded50 ?? 0).toFixed(0)}</strong></p>
-            <p>Rounded (nearest 100): <strong>₹{Number(estimates.rounded100 ?? 0).toFixed(0)}</strong></p>
-            <p className="text-xs text-gray-600">Tip: Final price saved will use rounded amount by default.</p>
+<p>Service fee (10%): <strong>₹{Number(estimates.serviceFee ?? 0).toFixed(2)}</strong></p>
+
+{/* GST and final totals */}
+<p>GST (18% on subtotal+fee): <strong>₹{Number(estimates.gst ?? 0).toFixed(2)}</strong></p>
+
+<p className="text-lg">Total (with GST): <strong>₹{Number(estimates.totalWithGst ?? 0).toFixed(2)}</strong></p>
+
+{/* Show full-rupee rounded total (no paise) */}
+<p>Final payable (rounded to whole ₹): <strong>₹{Number(estimates.roundedTotal ?? 0).toFixed(0)}</strong></p>
+
+<p className="text-xs text-gray-600">Tip: Final price saved will use the rounded whole-rupee amount by default.</p>
+
           </div>
         )}
       </div>

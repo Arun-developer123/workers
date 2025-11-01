@@ -8,38 +8,46 @@ export default function RefreshButton() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
 
   const handleRefresh = async () => {
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      // 1) Preferred: use router.refresh() if available (revalidates server components)
-      if (router && typeof (router as any).refresh === "function") {
-        (router as any).refresh();
-        // allow UI to show loading briefly; router.refresh is synchronous (schedules revalidation)
+    try {
+      // create a typed view of router without using `any`
+      const maybeRouter = router as unknown as {
+        refresh?: unknown;
+        replace?: unknown;
+      };
+
+      // 1) If router.refresh exists, use it (revalidates server components)
+      if (typeof maybeRouter.refresh === "function") {
+        (maybeRouter.refresh as () => void)();
+        // show loading briefly for UX
         setTimeout(() => setLoading(false), 350);
         return;
       }
 
-      // 2) Fallback: standard full page reload (works in all environments)
+      // 2) Fallback: full page reload
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         window.location.reload();
         return;
       }
 
-      // 3) Another fallback: router.replace to same path (doesn't add history entry)
+      // 3) Fallback: router.replace to same URL (no new history entry)
       const sp = searchParams ? (searchParams.toString() ? `?${searchParams.toString()}` : "") : "";
       const url = `${pathname ?? "/"}${sp}`;
-      if (router && typeof router.replace === "function") {
-        // replace to avoid creating new history entry
-        router.replace(url);
+
+      if (typeof maybeRouter.replace === "function") {
+        (maybeRouter.replace as (url: string) => void)(url);
         setTimeout(() => setLoading(false), 350);
         return;
       }
     } catch (err) {
-      // if something goes wrong, ensure loading state cleared
+      // log and continue — ensure loading cleared
+      // eslint-disable-next-line no-console
       console.error("Refresh failed:", err);
+    } finally {
       setLoading(false);
     }
   };

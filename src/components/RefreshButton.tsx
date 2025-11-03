@@ -1,44 +1,50 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+
+type MinimalRouter = {
+  refresh?: () => void;
+  replace?: (url: string) => void;
+};
 
 export default function RefreshButton() {
   const router = useRouter();
   const [loading, setLoading] = useState<boolean>(false);
 
   const handleRefresh = async () => {
+    // console.log for quick debugging
+    // eslint-disable-next-line no-console
     console.log("Refresh clicked");
     setLoading(true);
 
     try {
-      // Preferred: router.refresh() (App Router)
-      // TypeScript may not know refresh exists on all router shapes, so use any for safety.
-      const anyRouter = router as any;
-      if (typeof anyRouter.refresh === "function") {
-        anyRouter.refresh();
-        // small UX delay so spinner is visible
+      const maybeRouter = router as unknown as MinimalRouter;
+
+      // Preferred: app-router refresh (revalidates server components)
+      if (typeof maybeRouter.refresh === "function") {
+        maybeRouter.refresh();
         setTimeout(() => setLoading(false), 350);
         return;
       }
 
-      // fallback: full page reload
+      // Fallback: full page reload
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         window.location.reload();
         return;
       }
 
-      // last fallback: replace current URL (client navigation)
-      if (typeof window !== "undefined" && typeof anyRouter.replace === "function") {
+      // Final fallback: replace current URL (client navigation)
+      if (typeof window !== "undefined" && typeof maybeRouter.replace === "function") {
         const url = `${window.location.pathname}${window.location.search || ""}${window.location.hash || ""}`;
-        anyRouter.replace(url);
+        maybeRouter.replace(url);
         setTimeout(() => setLoading(false), 350);
         return;
       }
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.error("Refresh failed:", err);
     } finally {
-      // ensure we stop loading in case of unexpected path
       setLoading(false);
     }
   };

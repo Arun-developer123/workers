@@ -1,7 +1,6 @@
-// File: src/components/RefreshButton.tsx
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function RefreshButton() {
@@ -9,49 +8,44 @@ export default function RefreshButton() {
   const [loading, setLoading] = useState<boolean>(false);
 
   const handleRefresh = async () => {
+    console.log("Refresh clicked");
     setLoading(true);
 
     try {
-      // typed shallow view of router methods we may call
-      const maybeRouter = router as unknown as {
-        refresh?: () => void;
-        replace?: (url: string) => void;
-      };
-
-      // 1) Preferred: use router.refresh() if available (revalidates server components)
-      if (typeof maybeRouter.refresh === "function") {
-        maybeRouter.refresh();
-        // show small loading for UX
+      // Preferred: router.refresh() (App Router)
+      // TypeScript may not know refresh exists on all router shapes, so use any for safety.
+      const anyRouter = router as any;
+      if (typeof anyRouter.refresh === "function") {
+        anyRouter.refresh();
+        // small UX delay so spinner is visible
         setTimeout(() => setLoading(false), 350);
         return;
       }
 
-      // 2) Full reload fallback (works everywhere)
+      // fallback: full page reload
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         window.location.reload();
         return;
       }
 
-      // 3) Fallback: use router.replace to same path constructed from window.location
-      // (router.replace is client-only; only run if exists)
-      if (typeof window !== "undefined") {
+      // last fallback: replace current URL (client navigation)
+      if (typeof window !== "undefined" && typeof anyRouter.replace === "function") {
         const url = `${window.location.pathname}${window.location.search || ""}${window.location.hash || ""}`;
-        if (typeof maybeRouter.replace === "function") {
-          maybeRouter.replace(url);
-          setTimeout(() => setLoading(false), 350);
-          return;
-        }
+        anyRouter.replace(url);
+        setTimeout(() => setLoading(false), 350);
+        return;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error("Refresh failed:", err);
     } finally {
+      // ensure we stop loading in case of unexpected path
       setLoading(false);
     }
   };
 
   return (
     <button
+      id="refresh-btn"
       onClick={handleRefresh}
       disabled={loading}
       className={`px-3 py-1 rounded-lg shadow-sm border border-teal-600 bg-teal-500 text-white text-sm hover:opacity-90 transition flex items-center gap-2 ${
@@ -67,12 +61,13 @@ export default function RefreshButton() {
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
+            aria-hidden
           >
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
             <path
-              className="opacity-75"
               fill="currentColor"
               d="M4 12a8 8 0 018-8v4l3-3-3-3v4a12 12 0 100 24 12 12 0 010-24z"
+              className="opacity-75"
             />
           </svg>
           Refreshing…

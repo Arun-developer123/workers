@@ -4,6 +4,12 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 
+/** Minimal router interface we rely on (no `any`) */
+type MinimalRouter = {
+  refresh?: () => void;
+  replace?: (url: string) => void;
+};
+
 export default function RefreshButton() {
   const router = useRouter();
   const [loading, setLoading] = useState<boolean>(false);
@@ -11,29 +17,30 @@ export default function RefreshButton() {
   const handleRefresh = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    // quick debug log - check console when clicking
+
+    // debug: visible in console to confirm handler runs
     // eslint-disable-next-line no-console
     console.log("Refresh clicked (handler start)", { time: Date.now() });
     setLoading(true);
 
     try {
-      // prefer app-router refresh if available
-      // next/navigation's router has refresh() in app-router; guard defensively
-      if (typeof (router as any)?.refresh === "function") {
+      const maybeRouter = router as unknown as MinimalRouter;
+
+      // Preferred: app-router refresh (revalidates server components)
+      if (typeof maybeRouter.refresh === "function") {
         try {
-          (router as any).refresh();
-          // give a little UI feedback then reset loading
+          maybeRouter.refresh!();
           setTimeout(() => setLoading(false), 350);
           // eslint-disable-next-line no-console
           console.log("router.refresh() called");
           return;
-        } catch (err) {
+        } catch (err: unknown) {
           // eslint-disable-next-line no-console
           console.warn("router.refresh() threw, falling back to reload:", err);
         }
       }
 
-      // fallback: full reload
+      // Fallback: full page reload, most reliable
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
         // eslint-disable-next-line no-console
         console.log("Falling back to window.location.reload()");
@@ -41,21 +48,21 @@ export default function RefreshButton() {
         return;
       }
 
-      // last-resort: replace navigation
-      if (typeof (router as any)?.replace === "function") {
+      // Final fallback: router.replace if available
+      if (typeof maybeRouter.replace === "function" && typeof window !== "undefined") {
         const url = `${window.location.pathname}${window.location.search || ""}${window.location.hash || ""}`;
-        (router as any).replace(url);
+        maybeRouter.replace!(url);
         setTimeout(() => setLoading(false), 350);
         // eslint-disable-next-line no-console
         console.log("router.replace() fallback used:", url);
         return;
       }
 
-      // If we reach here nothing worked
+      // Nothing worked
       // eslint-disable-next-line no-console
       console.error("No refresh method available");
       alert("Refresh not supported in this environment — try reloading the page manually.");
-    } catch (err) {
+    } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.error("Unexpected error in refresh handler:", err);
       alert("Refresh failed (check console).");
@@ -72,7 +79,6 @@ export default function RefreshButton() {
       disabled={loading}
       aria-label="Refresh page"
       title="Refresh page"
-      // inline styles to reduce chance of being obscured; remove or tweak later if needed
       style={{
         zIndex: 9999,
         pointerEvents: loading ? "none" : "auto",

@@ -4,92 +4,17 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import AudioButton from "@/components/AudioButton";
+import { OCCUPATIONS, PricingOption } from "@/lib/occupations";
 
 type Role = "worker" | "contractor" | null;
+
 
 type OccupationOption = {
   value: string;
   label: string;
-  pricingOptions: { value: string; label: string; unitHint?: string }[];
+  pricingOptions: PricingOption[];
 };
 
-const OCCUPATIONS: OccupationOption[] = [
-  {
-    value: "rajmistri",
-    label: "राजमिस्त्री (Mason)",
-    pricingOptions: [
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-      { value: "per_piece", label: "दर: प्रति यूनिट", unitHint: "INR/piece" },
-    ],
-  },
-  {
-    value: "painter",
-    label: "पेंटर (Painter)",
-    pricingOptions: [
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-      { value: "per_sqft", label: "दर: प्रति sqft", unitHint: "INR/sqft" },
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-    ],
-  },
-  {
-    value: "electrician",
-    label: "इलेक्ट्रीशियन (Electrician)",
-    pricingOptions: [
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-      { value: "per_job", label: "दर: प्रति काम", unitHint: "INR/job" },
-    ],
-  },
-  {
-    value: "plumber",
-    label: "प्लम्बर (Plumber)",
-    pricingOptions: [
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-      { value: "per_job", label: "दर: प्रति काम", unitHint: "INR/job" },
-    ],
-  },
-  {
-    value: "carpenter",
-    label: "कारपेंटर (Carpenter)",
-    pricingOptions: [
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-      { value: "per_piece", label: "दर: प्रति यूनिट", unitHint: "INR/piece" },
-    ],
-  },
-  {
-    value: "welding",
-    label: "वेल्डर (Welder)",
-    pricingOptions: [
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-      { value: "per_job", label: "दर: प्रति काम", unitHint: "INR/job" },
-    ],
-  },
-  {
-    value: "driver",
-    label: "ड्राइवर (Driver)",
-    pricingOptions: [
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-      { value: "per_trip", label: "दर: प्रति ट्रिप", unitHint: "INR/trip" },
-    ],
-  },
-  {
-    value: "helper",
-    label: "हेल्पर / लेबर (Helper / Labourer)",
-    pricingOptions: [
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-      { value: "per_hour", label: "दर: प्रति घंटा", unitHint: "INR/hour" },
-    ],
-  },
-  {
-    value: "tile_fixer",
-    label: "टाइल फिट्टर (Tile fixer)",
-    pricingOptions: [
-      { value: "per_sqft", label: "दर: प्रति sqft", unitHint: "INR/sqft" },
-      { value: "per_day", label: "दर: प्रति दिन", unitHint: "INR/day" },
-    ],
-  },
-];
 
 const EXPERIENCE_LEVELS = [
   { value: "0-1", label: "0-1 वर्ष" },

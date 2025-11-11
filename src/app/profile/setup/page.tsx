@@ -8,7 +8,6 @@ import { OCCUPATIONS, PricingOption } from "@/lib/occupations";
 
 type Role = "worker" | "contractor" | null;
 
-
 type OccupationOption = {
   value: string;
   label: string;

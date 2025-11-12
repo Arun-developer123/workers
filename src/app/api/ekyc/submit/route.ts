@@ -25,8 +25,10 @@ type FileLike = Blob & {
 /**
  * Detects whether an object is a web ReadableStream with getReader()
  */
-function isWebReadableStream(x: unknown): x is WebReadable & { getReader: () => ReadableStreamDefaultReader<Uint8Array> } {
-  return !!x && typeof (x as any)?.getReader === "function";
+function isWebReadableStream(
+  x: unknown
+): x is WebReadable & { getReader: () => ReadableStreamDefaultReader<Uint8Array> } {
+  return !!x && typeof (x as { getReader?: unknown }).getReader === "function";
 }
 
 /**
@@ -122,7 +124,6 @@ export async function POST(req: Request) {
           const s = file.stream();
           buffer = await streamToBuffer(s as WebReadable | NodeReadable);
         } else {
-          // fallback attempt (some runtimes may still provide arrayBuffer via prototype)
           const ab = await (file as Blob & { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer?.();
           if (!ab) throw new Error("unsupported file-like object");
           buffer = Buffer.from(ab);

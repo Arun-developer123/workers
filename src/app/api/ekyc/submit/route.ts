@@ -11,26 +11,46 @@ const safeExt = (name?: string) => {
   return raw.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
 };
 
-// fallback helper: accept either a web ReadableStream or Node Readable stream
-async function streamToBuffer(stream: ReadableStream<Uint8Array> | NodeJS.ReadableStream): Promise<Buffer> {
-  // web ReadableStream (has getReader)
-  const webReader = (stream as ReadableStream<any>)?.getReader?.();
-  if (webReader) {
+/**
+ * Type helpers to avoid `any`.
+ */
+type NodeReadable = NodeJS.ReadableStream;
+type WebReadable = ReadableStream<Uint8Array>;
+type FileLike = Blob & {
+  stream?: () => WebReadable | NodeReadable;
+  name?: string;
+  type?: string;
+};
+
+/**
+ * Detects whether an object is a web ReadableStream with getReader()
+ */
+function isWebReadableStream(x: unknown): x is WebReadable & { getReader: () => ReadableStreamDefaultReader<Uint8Array> } {
+  return !!x && typeof (x as any)?.getReader === "function";
+}
+
+/**
+ * Read a readable (web ReadableStream or Node readable) into a Buffer.
+ */
+async function streamToBuffer(stream: WebReadable | NodeReadable): Promise<Buffer> {
+  // web ReadableStream path
+  if (isWebReadableStream(stream)) {
+    const reader = stream.getReader();
     const chunks: Uint8Array[] = [];
+    // eslint-disable-next-line no-constant-condition
     while (true) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const { done, value } = await webReader.read();
-      if (done) break;
-      chunks.push(value);
+      const result = await reader.read();
+      if (result.done) break;
+      if (result.value) chunks.push(result.value);
     }
     return Buffer.concat(chunks);
   }
 
-  // Node.js Readable stream fallback (async iterable)
+  // Node ReadableStream (async iterable) fallback
   const nodeChunks: Uint8Array[] = [];
-  // for-await-of works for Node streams that are async iterable
+  // `for await` works for Node streams that are async iterable
   // eslint-disable-next-line no-restricted-syntax
-  for await (const chunk of stream as NodeJS.ReadableStream & AsyncIterable<Uint8Array>) {
+  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array | string>) {
     if (typeof chunk === "string") {
       nodeChunks.push(Buffer.from(chunk));
     } else {
@@ -51,7 +71,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 500 });
     }
 
-    // lazy import so module import never throws at top-level
+    // lazy import so top-level import doesn't throw during build-time
     const { createClient } = await import("@supabase/supabase-js");
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -80,28 +100,29 @@ export async function POST(req: Request) {
     const now = Date.now();
     const uploads: Record<string, { path: string } | null> = {};
 
-    // Accept FormDataEntryValue (File | string) and handle safe narrowing
-    const uploadBlob = async (file: FormDataEntryValue | null, folder: string): Promise<{ path: string } | null> => {
-      if (!file) return null;
+    /**
+     * Accepts FormDataEntryValue (File-like) and returns uploaded path or null.
+     */
+    const uploadBlob = async (entry: FormDataEntryValue | null, folder: string): Promise<{ path: string } | null> => {
+      if (!entry) return null;
 
-      // file may be a string (shouldn't for files) — guard against that
-      if (typeof file === "string") {
+      if (typeof entry === "string") {
         throw new Error("expected a file upload, got string");
       }
 
-      // Now file is a File or Blob-like object
-      // Try arrayBuffer() (web File/Blob)
+      const file = entry as FileLike;
+
+      // Try reading as arrayBuffer (web Blob/File)
       let buffer: Buffer;
       try {
-        if (typeof (file as Blob).arrayBuffer === "function") {
-          const ab = await (file as Blob).arrayBuffer();
+        if (typeof file.arrayBuffer === "function") {
+          const ab = await file.arrayBuffer();
           buffer = Buffer.from(ab);
-        } else if (typeof (file as any).stream === "function") {
-          // some runtimes expose stream()
-          const s = (file as any).stream();
-          buffer = await streamToBuffer(s as ReadableStream<Uint8Array> | NodeJS.ReadableStream);
+        } else if (typeof file.stream === "function") {
+          const s = file.stream();
+          buffer = await streamToBuffer(s as WebReadable | NodeReadable);
         } else {
-          // last resort: treat as Blob-like and try arrayBuffer
+          // fallback attempt (some runtimes may still provide arrayBuffer via prototype)
           const ab = await (file as Blob & { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer?.();
           if (!ab) throw new Error("unsupported file-like object");
           buffer = Buffer.from(ab);
@@ -111,10 +132,10 @@ export async function POST(req: Request) {
         throw new Error(`failed to read file body: ${msg}`);
       }
 
-      const name = typeof (file as { name?: string }).name === "string" ? (file as { name?: string }).name : undefined;
-      const ext = safeExt(name);
+      const originalName = typeof file.name === "string" ? file.name : undefined;
+      const ext = safeExt(originalName);
       const filePath = `${folder}/${user_id}_${now}.${ext}`;
-      const contentType = typeof (file as { type?: string }).type === "string" ? (file as { type?: string }).type : "application/octet-stream";
+      const contentType = typeof file.type === "string" ? file.type : "application/octet-stream";
 
       const { error } = await supabaseAdmin.storage.from(bucket).upload(filePath, buffer, {
         contentType,
@@ -124,6 +145,7 @@ export async function POST(req: Request) {
       if (error) {
         throw new Error(`storage.upload failed (${folder}): ${error.message || JSON.stringify(error)}`);
       }
+
       return { path: filePath };
     };
 
@@ -172,14 +194,14 @@ export async function POST(req: Request) {
       }),
     };
 
-    if (name) (updates as Record<string, unknown>).name = name;
-    if (phone) (updates as Record<string, unknown>).phone = phone;
-    if (aadhaar_masked) (updates as Record<string, unknown>).aadhaar_masked = aadhaar_masked;
-    if (bank_account_masked) (updates as Record<string, unknown>).bank_account_masked = bank_account_masked;
-    if (bank_name) (updates as Record<string, unknown>).bank_name = bank_name;
-    if (ifsc) (updates as Record<string, unknown>).ifsc = ifsc;
-    if (upi) (updates as Record<string, unknown>).upi = upi;
-    if (uploads.profile?.path) (updates as Record<string, unknown>).profile_image_path = uploads.profile.path;
+    if (name) updates.name = name;
+    if (phone) updates.phone = phone;
+    if (aadhaar_masked) updates.aadhaar_masked = aadhaar_masked;
+    if (bank_account_masked) updates.bank_account_masked = bank_account_masked;
+    if (bank_name) updates.bank_name = bank_name;
+    if (ifsc) updates.ifsc = ifsc;
+    if (upi) updates.upi = upi;
+    if (uploads.profile?.path) updates.profile_image_path = uploads.profile.path;
 
     const { error: upsertErr } = await supabaseAdmin.from("profiles").upsert(updates, { onConflict: "user_id" });
     if (upsertErr) {

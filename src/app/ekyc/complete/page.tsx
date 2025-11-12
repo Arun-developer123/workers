@@ -1,4 +1,4 @@
-// /src/app/ekyc/complete/page.tsx
+// src/app/ekyc/complete/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -83,29 +83,35 @@ export default function EkycCompletePage() {
       if (profilePhotoFile) fd.append("profile_file", profilePhotoFile);
 
       const res = await fetch("/api/ekyc/submit", {
-  method: "POST",
-  body: fd,
-});
+        method: "POST",
+        body: fd,
+      });
 
-let j: any = null;
-try {
-  // server should return JSON; if not, catch below
-  j = await res.json();
-} catch (parseErr) {
-  const text = await res.text();
-  console.error("Non-JSON response from /api/ekyc/submit:", text);
-  setMessage("सर्वर से अजीब प्रतिक्रिया मिली — डेवलपर कंसोल देखें।");
-  setLoading(false);
-  return;
-}
+      // use unknown, then narrow before reading fields
+      let j: unknown = null;
+      try {
+        // server should return JSON; if not, handled below
+        j = await res.json();
+      } catch {
+        const text = await res.text();
+        console.error("Non-JSON response from /api/ekyc/submit:", text);
+        setMessage("सर्वर से अजीब प्रतिक्रिया मिली — डेवलपर कंसोल देखें।");
+        setLoading(false);
+        return;
+      }
 
-if (!res.ok) {
-  console.error(j);
-  setMessage(j?.error || "Submission failed");
-  setLoading(false);
-  return;
-}
-
+      if (!res.ok) {
+        console.error(j);
+        // narrow safely: if j is object and has error string field, use it
+        let errMsg = "Submission failed";
+        if (typeof j === "object" && j !== null) {
+          const maybe = j as Record<string, unknown>;
+          if (typeof maybe.error === "string") errMsg = maybe.error;
+        }
+        setMessage(errMsg);
+        setLoading(false);
+        return;
+      }
 
       // update cached profile locally so home page updates immediately
       const stored = localStorage.getItem("fake_user_profile");
@@ -141,7 +147,7 @@ if (!res.ok) {
 
       <form onSubmit={handleSubmit} className="space-y-4 bg-white p-6 rounded-xl shadow">
         <div>
-          <label className="text-sm font-medium">Name</label>
+          <label className="text-sm font medium">Name</label>
           <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full p-2 border rounded" required />
         </div>
 

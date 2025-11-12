@@ -11,24 +11,33 @@ const safeExt = (name?: string) => {
   return raw.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
 };
 
-// utility to read a ReadableStream to Buffer (fallback)
-async function streamToBuffer(stream: any): Promise<Buffer> {
-  const reader = stream.getReader?.() ?? null;
-  if (!reader) {
-    // Node Readable stream fallback
+// fallback helper: accept either a web ReadableStream or Node Readable stream
+async function streamToBuffer(stream: ReadableStream<Uint8Array> | NodeJS.ReadableStream): Promise<Buffer> {
+  // web ReadableStream (has getReader)
+  const webReader = (stream as ReadableStream<any>)?.getReader?.();
+  if (webReader) {
     const chunks: Uint8Array[] = [];
-    for await (const chunk of stream) {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+    while (true) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const { done, value } = await webReader.read();
+      if (done) break;
+      chunks.push(value);
     }
     return Buffer.concat(chunks);
   }
-  const chunks: Uint8Array[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
+
+  // Node.js Readable stream fallback (async iterable)
+  const nodeChunks: Uint8Array[] = [];
+  // for-await-of works for Node streams that are async iterable
+  // eslint-disable-next-line no-restricted-syntax
+  for await (const chunk of stream as NodeJS.ReadableStream & AsyncIterable<Uint8Array>) {
+    if (typeof chunk === "string") {
+      nodeChunks.push(Buffer.from(chunk));
+    } else {
+      nodeChunks.push(Buffer.from(chunk));
+    }
   }
-  return Buffer.concat(chunks);
+  return Buffer.concat(nodeChunks);
 }
 
 export async function POST(req: Request) {
@@ -42,7 +51,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 500 });
     }
 
-    // lazy import so module import never throws and so errors are caught here
+    // lazy import so module import never throws at top-level
     const { createClient } = await import("@supabase/supabase-js");
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -71,32 +80,41 @@ export async function POST(req: Request) {
     const now = Date.now();
     const uploads: Record<string, { path: string } | null> = {};
 
-    const uploadBlob = async (file: any, folder: string) => {
+    // Accept FormDataEntryValue (File | string) and handle safe narrowing
+    const uploadBlob = async (file: FormDataEntryValue | null, folder: string): Promise<{ path: string } | null> => {
       if (!file) return null;
-      // support both web File and Node-like streams
-      let buffer: Buffer | null = null;
 
-      if (typeof file.arrayBuffer === "function") {
-        const ab = await file.arrayBuffer();
-        try {
-          buffer = Buffer.from(ab);
-        } catch {
-          buffer = Buffer.from(new Uint8Array(ab));
-        }
-      } else if (typeof file.stream === "function") {
-        const s = file.stream();
-        buffer = await streamToBuffer(s);
-      } else if (file instanceof Blob) {
-        const ab = await file.arrayBuffer();
-        buffer = Buffer.from(ab);
-      } else {
-        // unsupported file-like object
-        throw new Error("unsupported file object");
+      // file may be a string (shouldn't for files) — guard against that
+      if (typeof file === "string") {
+        throw new Error("expected a file upload, got string");
       }
 
-      const ext = safeExt((file as any).name);
+      // Now file is a File or Blob-like object
+      // Try arrayBuffer() (web File/Blob)
+      let buffer: Buffer;
+      try {
+        if (typeof (file as Blob).arrayBuffer === "function") {
+          const ab = await (file as Blob).arrayBuffer();
+          buffer = Buffer.from(ab);
+        } else if (typeof (file as any).stream === "function") {
+          // some runtimes expose stream()
+          const s = (file as any).stream();
+          buffer = await streamToBuffer(s as ReadableStream<Uint8Array> | NodeJS.ReadableStream);
+        } else {
+          // last resort: treat as Blob-like and try arrayBuffer
+          const ab = await (file as Blob & { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer?.();
+          if (!ab) throw new Error("unsupported file-like object");
+          buffer = Buffer.from(ab);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`failed to read file body: ${msg}`);
+      }
+
+      const name = typeof (file as { name?: string }).name === "string" ? (file as { name?: string }).name : undefined;
+      const ext = safeExt(name);
       const filePath = `${folder}/${user_id}_${now}.${ext}`;
-      const contentType = (file as any).type || "application/octet-stream";
+      const contentType = typeof (file as { type?: string }).type === "string" ? (file as { type?: string }).type : "application/octet-stream";
 
       const { error } = await supabaseAdmin.storage.from(bucket).upload(filePath, buffer, {
         contentType,
@@ -109,37 +127,40 @@ export async function POST(req: Request) {
       return { path: filePath };
     };
 
-    // get file entries (may be File objects)
-    const aadhaarFile = form.get("aadhaar_file") as any | null;
-    const bankFile = form.get("bank_file") as any | null;
-    const profileFile = form.get("profile_file") as any | null;
+    // grab file entries (FormDataEntryValue | null)
+    const aadhaarFile = form.get("aadhaar_file") as FormDataEntryValue | null;
+    const bankFile = form.get("bank_file") as FormDataEntryValue | null;
+    const profileFile = form.get("profile_file") as FormDataEntryValue | null;
 
     // upload each with its own try/catch to give clearer errors
     try {
       uploads.aadhaar = aadhaarFile ? await uploadBlob(aadhaarFile, "aadhaar") : null;
-    } catch (e: any) {
-      console.error("[ekyc/submit] aadhaar upload error:", e?.message || e);
-      return NextResponse.json({ error: `aadhaar upload failed: ${e?.message || String(e)}` }, { status: 500 });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[ekyc/submit] aadhaar upload error:", msg);
+      return NextResponse.json({ error: `aadhaar upload failed: ${msg}` }, { status: 500 });
     }
 
     try {
       uploads.bank = bankFile ? await uploadBlob(bankFile, "bank") : null;
-    } catch (e: any) {
-      console.error("[ekyc/submit] bank upload error:", e?.message || e);
-      return NextResponse.json({ error: `bank upload failed: ${e?.message || String(e)}` }, { status: 500 });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[ekyc/submit] bank upload error:", msg);
+      return NextResponse.json({ error: `bank upload failed: ${msg}` }, { status: 500 });
     }
 
     try {
       uploads.profile = profileFile ? await uploadBlob(profileFile, "profile") : null;
-    } catch (e: any) {
-      console.error("[ekyc/submit] profile upload error:", e?.message || e);
-      return NextResponse.json({ error: `profile upload failed: ${e?.message || String(e)}` }, { status: 500 });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[ekyc/submit] profile upload error:", msg);
+      return NextResponse.json({ error: `profile upload failed: ${msg}` }, { status: 500 });
     }
 
     const aadhaar_masked = aadhaar ? `XXXX-XXXX-${aadhaar.slice(-4)}` : null;
     const bank_account_masked = account_number ? `XXXX-XXXX-${account_number.slice(-4)}` : null;
 
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       user_id,
       updated_at: new Date().toISOString(),
       is_ekyc_complete: true,
@@ -151,25 +172,26 @@ export async function POST(req: Request) {
       }),
     };
 
-    if (name) updates.name = name;
-    if (phone) updates.phone = phone;
-    if (aadhaar_masked) updates.aadhaar_masked = aadhaar_masked;
-    if (bank_account_masked) updates.bank_account_masked = bank_account_masked;
-    if (bank_name) updates.bank_name = bank_name;
-    if (ifsc) updates.ifsc = ifsc;
-    if (upi) updates.upi = upi;
-    if (uploads.profile?.path) updates.profile_image_path = uploads.profile.path;
+    if (name) (updates as Record<string, unknown>).name = name;
+    if (phone) (updates as Record<string, unknown>).phone = phone;
+    if (aadhaar_masked) (updates as Record<string, unknown>).aadhaar_masked = aadhaar_masked;
+    if (bank_account_masked) (updates as Record<string, unknown>).bank_account_masked = bank_account_masked;
+    if (bank_name) (updates as Record<string, unknown>).bank_name = bank_name;
+    if (ifsc) (updates as Record<string, unknown>).ifsc = ifsc;
+    if (upi) (updates as Record<string, unknown>).upi = upi;
+    if (uploads.profile?.path) (updates as Record<string, unknown>).profile_image_path = uploads.profile.path;
 
     const { error: upsertErr } = await supabaseAdmin.from("profiles").upsert(updates, { onConflict: "user_id" });
     if (upsertErr) {
       console.error("[ekyc/submit] profiles upsert error:", upsertErr);
-      if ((upsertErr as any).message && (upsertErr as any).message.includes("foreign key")) {
+      const msg = (upsertErr as { message?: string }).message;
+      if (msg && msg.includes("foreign key")) {
         return NextResponse.json({
           error: "profiles upsert failed (DB foreign-key/type mismatch). Check profiles.user_id vs worker_documents.user_id types (uuid vs text).",
-          detail: process.env.NODE_ENV !== "production" ? (upsertErr as any).message : undefined,
+          detail: process.env.NODE_ENV !== "production" ? msg : undefined,
         }, { status: 500 });
       }
-      return NextResponse.json({ error: upsertErr.message || String(upsertErr) }, { status: 500 });
+      return NextResponse.json({ error: (upsertErr as { message?: string }).message || String(upsertErr) }, { status: 500 });
     }
 
     // insert audit row (non-fatal)
@@ -186,29 +208,31 @@ export async function POST(req: Request) {
 
       if (docErr) {
         console.warn("[ekyc/submit] worker_documents insert warning:", docErr);
-        if ((docErr as any).message && (docErr as any).message.includes("foreign key")) {
+        const msg = (docErr as { message?: string }).message;
+        if (msg && msg.includes("foreign key")) {
           return NextResponse.json({
             error: "worker_documents insert failed due to foreign key / type mismatch between worker_documents.user_id and profiles.user_id. Ensure both columns have the same type (uuid vs text).",
-            detail: process.env.NODE_ENV !== "production" ? (docErr as any).message : undefined
+            detail: process.env.NODE_ENV !== "production" ? msg : undefined
           }, { status: 500 });
         }
       }
-    } catch (e: any) {
-      console.warn("[ekyc/submit] worker_documents insert exception:", e);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[ekyc/submit] worker_documents insert exception:", msg);
       if (process.env.NODE_ENV !== "production") {
-        return NextResponse.json({ error: "worker_documents insert exception", detail: String(e) }, { status: 500 });
+        return NextResponse.json({ error: "worker_documents insert exception", detail: msg }, { status: 500 });
       } else {
         console.warn("[ekyc/submit] continuing despite worker_documents insert exception");
       }
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (err: any) {
-    console.error("[ekyc/submit] uncaught ERROR:", err);
-    const message = err?.message || "internal_error";
-    const payload: any = { error: message };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[ekyc/submit] uncaught ERROR:", msg);
+    const payload: Record<string, unknown> = { error: msg };
     if (process.env.NODE_ENV !== "production") {
-      payload.detail = err?.stack || null;
+      payload.detail = (err instanceof Error && err.stack) ? err.stack : null;
     }
     return NextResponse.json(payload, { status: 500 });
   }

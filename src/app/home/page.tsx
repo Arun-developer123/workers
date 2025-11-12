@@ -15,6 +15,11 @@ interface Profile {
   phone?: string;
   wage?: string | number | null;
   profile_image_url?: string | null;
+
+  // eKYC fields (optional, may be absent for older rows)
+  is_ekyc_complete?: boolean;
+  ekyc_status?: "pending" | "verified" | "none";
+  aadhaar_masked?: string | null;
 }
 
 interface Job {
@@ -109,6 +114,19 @@ export default function HomePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // utility: determine whether profile has completed eKYC
+const isEkycComplete = (p: Profile | null) => {
+  if (!p) return false;
+  // prefer explicit boolean
+  if (typeof p.is_ekyc_complete === "boolean") return p.is_ekyc_complete;
+  // fallback to status
+  if (p.ekyc_status === "verified") return true;
+  // fallback to masked aadhaar presence
+  if (p.aadhaar_masked && p.aadhaar_masked.length >= 4) return true;
+  return false;
+};
+
 
   useEffect(() => {
     // typed CustomEvent carrying a Profile in detail
@@ -741,6 +759,33 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+
+      {/* IMPORTANT eKYC banner: show if eKYC not complete */}
+{!isEkycComplete(profile) && (
+  <div className="mb-6 p-4 rounded-xl border-2 border-red-300 bg-red-50 text-red-900 shadow-sm">
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <div className="font-bold text-lg">महत्वपूर्ण: आपकी eKYC पूरी नहीं हुई</div>
+        <div className="text-sm mt-1 opacity-90">
+          आपकी eKYC पूरी नहीं होने के कारण आपको अभी काम नहीं मिलेगा और सरकारी योजनाओं/भुगतान के लिए पात्रता नहीं बनेगी। कृपया तुरंत eKYC पूरा करें।
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => {
+            // navigate to eKYC completion page with user id param
+            router.push(`/ekyc/complete?user_id=${encodeURIComponent(profile.user_id)}`);
+          }}
+          className="bg-red-600 text-white py-2 px-4 rounded-lg font-semibold shadow hover:opacity-95"
+        >
+          अभी eKYC करें
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
 
       {/* ---------------- Profiles modal (shows when profilesModalOpen is true) ---------------- */}
       {profilesModalOpen && (

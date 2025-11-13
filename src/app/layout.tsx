@@ -10,10 +10,11 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="h-full">
       <head>
-        {/* Viewport for mobile responsiveness */}
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+        {/* Required meta tags for mobile responsiveness */}
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
 
         {/* PWA manifest */}
         <link rel="manifest" href="/manifest.json" />
@@ -26,24 +27,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-title" content="KaamLink" />
       </head>
 
-      <body>
-        {/* Main container with responsive width */}
-        <main className="mx-auto max-w-[900px] p-4">
-          {/* Top row: title + refresh button */}
-          <div className="flex items-center justify-between mb-4">
+      <body className="min-h-screen h-full bg-[var(--background)] text-[var(--foreground)] antialiased">
+        {/* Centered responsive container: full width on small screens, limited on larger */}
+        <main className="w-full max-w-screen-md mx-auto px-4 py-6">
+          {/* Top row: logo + title + refresh button */}
+          <header className="flex items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-3">
-              <img src="/icons/icon-192.png" alt="KaamLink" className="w-8 h-8 rounded-sm" />
-              <h1 className="text-lg font-semibold">KaamLink</h1>
+              <img
+                src="/icons/icon-192.png"
+                alt="KaamLink"
+                className="w-8 h-8 rounded-sm object-contain"
+              />
+              <h1 className="text-base sm:text-lg font-semibold leading-tight">KaamLink</h1>
             </div>
 
-            {/* Client-side Refresh button component */}
-            <RefreshButton />
-          </div>
+            {/* Client-side Refresh button component (should handle its own sizing) */}
+            <div className="flex items-center">
+              <RefreshButton />
+            </div>
+          </header>
 
-          {children}
+          {/* Page content */}
+          <section className="w-full">{children}</section>
         </main>
 
-        {/* PWA registration */}
+        {/* PWA registration (keeps being rendered client-side inside) */}
         <PwaRegister />
       </body>
     </html>

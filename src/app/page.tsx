@@ -39,19 +39,6 @@ const featureList = [
   },
 ];
 
-// at top of app/page.tsx
-export const metadata = {
-  title: "KaamLink — Digital Rozgaar for Every Worker",
-  description: "KaamLink connects verified local workers directly to customers — escrow payments, SOS, verified profiles and fair pay.",
-  openGraph: {
-    title: "KaamLink — Digital Rozgaar for Every Worker",
-    description: "Verified workers • Escrow payments • SOS • Transparent reviews.",
-    url: "https://workers-taupe.vercel.app/",
-    images: ["/workers-og.png"],
-  },
-};
-
-
 export default function LandingPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-gray-100 text-gray-900 antialiased">

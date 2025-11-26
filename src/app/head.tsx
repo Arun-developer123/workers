@@ -6,10 +6,7 @@ export default function Head() {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
 
       {/* Google verification */}
-      <meta
-        name="google-site-verification"
-        content="z1zXo8E_dO7ytdudD-i3_lyEthqakLDPmmj6fCiggl4"
-      />
+      <meta name="google-site-verification" content="z1zXo8E_dO7ytdudD-i3_lyEthqakLDPmmj6fCiggl4" />
 
       <title>KaamLink — Digital Rozgaar for Every Worker</title>
       <meta

@@ -261,28 +261,23 @@ export default function LandingPage() {
 
         <div className="border-t bg-white/60">
   <div className="max-w-7xl mx-auto px-6 lg:px-8 py-6 text-sm text-gray-600 flex flex-col md:flex-row items-center justify-between gap-3">
+
     <span>© {new Date().getFullYear()} KaamLink. All rights reserved.</span>
 
-    <div className="flex flex-col md:flex-row items-center gap-2 text-center md:text-right">
-      <span>
-        A product of{" "}
-        <a 
-          href="https://both-innovations.vercel.app/" 
-          className="text-green-600 font-semibold hover:underline"
-          target="_blank"
-        >
-          Both Innovations
-        </a>
-      </span>
-
-      <span>
-        &nbsp;• Built by{" "}
-        <a href="mailto:arunboth36@gmail.com" className="text-green-600 hover:underline">Arun</a>
-      </span>
-    </div>
+    <span>
+      A product of{" "}
+      <a
+        href="https://both-innovations.vercel.app/"
+        className="text-green-600 font-semibold hover:underline"
+        target="_blank"
+      >
+        Both Innovations
+      </a>
+    </span>
 
   </div>
 </div>
+
 
       </footer>
     </main>

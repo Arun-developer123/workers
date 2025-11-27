@@ -804,74 +804,138 @@ const isEkycComplete = (p: Profile | null) => {
         </button>
       </div>
     </div>
-    {/* ===== Bottom action bar (fixed) ===== */}
-<nav
-  aria-label="Primary"
-  className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
-             bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
->
-  <button
-    type="button"
-    onClick={() => router.push("/svari")}
-    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    aria-label="Svari"
+    {/* ---------- Role-specific bottom nav (mobile) ---------- */}
+{profile.role === "worker" ? (
+  <nav
+    aria-label="Worker Primary"
+    className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
+               bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
   >
-    <FaCar className="w-5 h-5" />
-    <span className="text-sm font-medium">Svari</span>
-  </button>
+    <button
+      type="button"
+      onClick={() => router.push("/svari")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+      aria-label="Svari"
+    >
+      <FaCar className="w-5 h-5" />
+      <span className="text-sm font-medium">Svari</span>
+    </button>
 
-  <button
-    type="button"
-    onClick={() => router.push("/shop")}
-    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    aria-label="Shop"
-  >
-    <FaShoppingCart className="w-5 h-5" />
-    <span className="text-sm font-medium">Shop</span>
-  </button>
+    <button
+      type="button"
+      onClick={() => router.push("/shop")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+      aria-label="Shop"
+    >
+      <FaShoppingCart className="w-5 h-5" />
+      <span className="text-sm font-medium">Shop</span>
+    </button>
 
-  <button
-    type="button"
-    onClick={() => router.push("/applications")}
-    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    aria-label="My applications"
+    <button
+      type="button"
+      onClick={() => router.push("/applications")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+      aria-label="My applications"
+    >
+      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <span className="text-sm font-medium">Applications</span>
+    </button>
+  </nav>
+) : (
+  /* contractor mobile nav */
+  <nav
+    aria-label="Contractor Primary"
+    className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
+               bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
   >
-    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-    <span className="text-sm font-medium">Applications</span>
-  </button>
-</nav>
+    <button
+      type="button"
+      onClick={() => router.push("/jobs/new")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    >
+      <span className="text-sm font-medium">नया काम डालें ➕</span>
+    </button>
 
-{/* Desktop: show small floating action cluster on right (optional) */}
-<div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
-  <button
-    type="button"
-    onClick={() => router.push("/svari")}
-    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    aria-label="Svari"
-  >
-    <FaCar className="w-5 h-5" />
-  </button>
-  <button
-    type="button"
-    onClick={() => router.push("/shop")}
-    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    aria-label="Shop"
-  >
-    <FaShoppingCart className="w-5 h-5" />
-  </button>
-  <button
-    type="button"
-    onClick={() => router.push("/applications")}
-    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    aria-label="Applications"
-  >
-    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  </button>
-</div>
+    <button
+      type="button"
+      onClick={() => router.push("/workers")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    >
+      <span className="text-sm font-medium">Workers देखें 👥</span>
+    </button>
+
+    <button
+      type="button"
+      onClick={() => router.push("/contractor/materials")}
+      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    >
+      <span className="text-sm font-medium">🧱 Materials</span>
+    </button>
+  </nav>
+)}
+
+{/* ---------- Role-specific floating cluster (desktop) ---------- */}
+{profile.role === "worker" ? (
+  <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
+    <button
+      type="button"
+      onClick={() => router.push("/svari")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+      aria-label="Svari"
+    >
+      <FaCar className="w-5 h-5" />
+    </button>
+    <button
+      type="button"
+      onClick={() => router.push("/shop")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+      aria-label="Shop"
+    >
+      <FaShoppingCart className="w-5 h-5" />
+    </button>
+    <button
+      type="button"
+      onClick={() => router.push("/applications")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+      aria-label="Applications"
+    >
+      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>
+  </div>
+) : (
+  <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
+    <button
+      type="button"
+      onClick={() => router.push("/jobs/new")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    >
+      <span className="sr-only">नया काम डालें</span>
+      <div className="text-sm font-medium">➕</div>
+    </button>
+
+    <button
+      type="button"
+      onClick={() => router.push("/workers")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    >
+      <span className="sr-only">Workers देखें</span>
+      <div className="text-sm font-medium">👥</div>
+    </button>
+
+    <button
+      type="button"
+      onClick={() => router.push("/contractor/materials")}
+      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    >
+      <span className="sr-only">Materials</span>
+      <div className="text-sm font-medium">🧱</div>
+    </button>
+  </div>
+)}
 
   </div>
 )}

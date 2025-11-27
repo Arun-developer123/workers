@@ -761,25 +761,28 @@ const isEkycComplete = (p: Profile | null) => {
         </div>
       </div>
 
-      {/* ===== Join Safety Fund (glowing CTA) ===== */}
-      <div className="mt-4 flex justify-center">
-        <button
-          type="button"
-          onClick={() => router.push("/safety-fund-details")}
-          className="inline-flex items-center gap-3 px-5 py-3 rounded-full text-sm font-semibold
-                     bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-lg
-                     ring-4 ring-amber-300/30 hover:scale-[1.02] transform transition
-                     focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400"
-          aria-label="Join Safety Fund"
-        >
-          <svg className="w-5 h-5 -ml-1" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M12 2v20" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M5 12h14" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-          Join Safety Fund — ₹20 / month
-          <span className="ml-2 text-xs bg-white/20 px-2 py-1 rounded-full">Voluntary</span>
-        </button>
-      </div>
+      {/* ===== Join Safety Fund (glowing CTA) — केवल Worker के लिए ===== */}
+{profile?.role === "worker" && (
+  <div className="mt-4 flex justify-center">
+    <button
+      type="button"
+      onClick={() => router.push("/safety-fund-details")}
+      className="inline-flex items-center gap-3 px-5 py-3 rounded-full text-sm font-semibold
+                 bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-lg
+                 ring-4 ring-amber-300/30 hover:scale-[1.02] transform transition
+                 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400"
+      aria-label="Join Safety Fund"
+    >
+      <svg className="w-5 h-5 -ml-1" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M12 2v20" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M5 12h14" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+      Join Safety Fund — ₹20 / month
+      <span className="ml-2 text-xs bg-white/20 px-2 py-1 rounded-full">Voluntary</span>
+    </button>
+  </div>
+)}
+
 
 
       {/* IMPORTANT eKYC banner: show if eKYC not complete */}

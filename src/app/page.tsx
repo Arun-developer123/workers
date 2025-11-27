@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { Mail, Users, ShieldCheck, Activity, Bolt } from "lucide-react";
 import { motion } from "framer-motion";
+import InstallPWAButton from "../components/InstallPWAButton";
+
 
 const featureList = [
   {
@@ -98,6 +100,9 @@ export default function LandingPage() {
                 </Link>
               </motion.div>
             </div>
+            <div className="mt-4">
+  <InstallPWAButton />
+</div>
 
             <div className="mt-6 grid grid-cols-2 gap-3 max-w-sm text-sm text-gray-600">
               <div className="flex items-center gap-2">

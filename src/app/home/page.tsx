@@ -761,6 +761,27 @@ const isEkycComplete = (p: Profile | null) => {
         </div>
       </div>
 
+      {/* ===== Join Safety Fund (glowing CTA) ===== */}
+      <div className="mt-4 flex justify-center">
+        <button
+          type="button"
+          onClick={() => router.push("/safety-fund-details")}
+          className="inline-flex items-center gap-3 px-5 py-3 rounded-full text-sm font-semibold
+                     bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-lg
+                     ring-4 ring-amber-300/30 hover:scale-[1.02] transform transition
+                     focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400"
+          aria-label="Join Safety Fund"
+        >
+          <svg className="w-5 h-5 -ml-1" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="M12 2v20" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+            <path d="M5 12h14" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          Join Safety Fund — ₹20 / month
+          <span className="ml-2 text-xs bg-white/20 px-2 py-1 rounded-full">Voluntary</span>
+        </button>
+      </div>
+
+
       {/* IMPORTANT eKYC banner: show if eKYC not complete */}
 {!isEkycComplete(profile) && (
   <div className="mb-6 p-4 rounded-xl border-2 border-red-300 bg-red-50 text-red-900 shadow-sm">
@@ -783,6 +804,75 @@ const isEkycComplete = (p: Profile | null) => {
         </button>
       </div>
     </div>
+    {/* ===== Bottom action bar (fixed) ===== */}
+<nav
+  aria-label="Primary"
+  className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
+             bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
+>
+  <button
+    type="button"
+    onClick={() => router.push("/svari")}
+    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    aria-label="Svari"
+  >
+    <FaCar className="w-5 h-5" />
+    <span className="text-sm font-medium">Svari</span>
+  </button>
+
+  <button
+    type="button"
+    onClick={() => router.push("/shop")}
+    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    aria-label="Shop"
+  >
+    <FaShoppingCart className="w-5 h-5" />
+    <span className="text-sm font-medium">Shop</span>
+  </button>
+
+  <button
+    type="button"
+    onClick={() => router.push("/applications")}
+    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+    aria-label="My applications"
+  >
+    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+    <span className="text-sm font-medium">Applications</span>
+  </button>
+</nav>
+
+{/* Desktop: show small floating action cluster on right (optional) */}
+<div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
+  <button
+    type="button"
+    onClick={() => router.push("/svari")}
+    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    aria-label="Svari"
+  >
+    <FaCar className="w-5 h-5" />
+  </button>
+  <button
+    type="button"
+    onClick={() => router.push("/shop")}
+    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    aria-label="Shop"
+  >
+    <FaShoppingCart className="w-5 h-5" />
+  </button>
+  <button
+    type="button"
+    onClick={() => router.push("/applications")}
+    className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+    aria-label="Applications"
+  >
+    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  </button>
+</div>
+
   </div>
 )}
 
@@ -877,32 +967,9 @@ const isEkycComplete = (p: Profile | null) => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">Worker Dashboard <AudioButton text="वर्कर डैशबोर्ड देखें" /></h2>
 
-            {/* --- ADD QUICK ACTION ICONS HERE --- */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => router.push("/svari")}
-                title="Svari — Shared Auto booking"
-                className="flex items-center gap-2 bg-black text-white px-3 py-2 rounded-lg shadow hover:opacity-90"
-              >
-                <FaCar /> <span className="hidden sm:inline">Svari</span>
-              </button>
+            {/* compact placeholder (actions moved to bottom navbar) */}
+<div />
 
-              <button
-                onClick={() => router.push("/shop")}
-                title="Shop — Buy tools & safety gear"
-                className="flex items-center gap-2 bg-green-600 text-white px-3 py-2 rounded-lg shadow hover:opacity-90"
-              >
-                <FaShoppingCart /> <span className="hidden sm:inline">Shop</span>
-              </button>
-
-              <button onClick={() => router.push("/applications")} className="bg-blue-50 border border-blue-200 text-blue-700 py-2 px-3 rounded-lg">मेरे आवेदन 📄</button>
-            </div>
-            {/* Safety Fund quick link (under action buttons) */}
-<div className="mt-2 text-sm">
-  <Link href="/safety-terms" className="text-blue-600 underline">
-    Read Terms & Conditions — Safety Fund
-  </Link>
-</div>
 
           </div>
 

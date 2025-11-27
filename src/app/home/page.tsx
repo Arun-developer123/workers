@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
 import { FaShoppingCart, FaCar } from "react-icons/fa";
+import Link from "next/link";
 
 // ==== Types ====
 interface Profile {
@@ -896,6 +897,13 @@ const isEkycComplete = (p: Profile | null) => {
 
               <button onClick={() => router.push("/applications")} className="bg-blue-50 border border-blue-200 text-blue-700 py-2 px-3 rounded-lg">मेरे आवेदन 📄</button>
             </div>
+            {/* Safety Fund quick link (under action buttons) */}
+<div className="mt-2 text-sm">
+  <Link href="/safety-terms" className="text-blue-600 underline">
+    Read Terms & Conditions — Safety Fund
+  </Link>
+</div>
+
           </div>
 
           <div className="bg-gradient-to-br from-white/80 to-white/60 rounded-xl p-4 shadow">

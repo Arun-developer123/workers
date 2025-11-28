@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
 import { FaShoppingCart, FaCar } from "react-icons/fa";
 import Link from "next/link";
+import ThreeDotsMenu from "@/components/ThreeDotsMenu";
+
 
 // ==== Types ====
 interface Profile {
@@ -1035,7 +1037,8 @@ const isEkycComplete = (p: Profile | null) => {
             <h2 className="text-xl font-semibold flex items-center gap-2">Worker Dashboard <AudioButton text="वर्कर डैशबोर्ड देखें" /></h2>
 
             {/* compact placeholder (actions moved to bottom navbar) */}
-<div />
+<ThreeDotsMenu profileRole={profile.role} profile={profile} />
+
 
 
           </div>
@@ -1084,14 +1087,10 @@ const isEkycComplete = (p: Profile | null) => {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
-            <div className="flex gap-2 items-center">
-              <button onClick={() => router.push("/jobs/new")} className="bg-blue-600 text-white py-2 px-3 rounded-lg">नया काम डालें ➕</button>
-              <button onClick={() => router.push("/workers")} className="bg-yellow-400 text-white py-2 px-3 rounded-lg">Workers देखें 👥</button>
+            {/* actions moved to bottom navbar */}
+<ThreeDotsMenu profileRole={profile.role} profile={profile} />
 
-              <button onClick={() => router.push("/contractor/materials")} className="bg-indigo-600 text-white py-2 px-3 rounded-lg flex items-center gap-2">
-                🧱 <span className="hidden sm:inline">Materials</span>
-              </button>
-            </div>
+
           </div>
 
           {applications.length === 0 ? (

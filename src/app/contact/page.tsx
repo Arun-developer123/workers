@@ -43,13 +43,13 @@ export default function ContactPage() {
     } catch (err) {
       // Fallback: open mail client with prefilled data
       try {
-        const mailto = `mailto:arunboth36@gmail.com?subject=${encodeURIComponent(subject || "Contact from KaamLink")}&body=${encodeURIComponent(
+        const mailto = `mailto:bothinnovations@gmail.com?subject=${encodeURIComponent(subject || "Contact from KaamLink")}&body=${encodeURIComponent(
           `Name: ${name}\nEmail: ${email}\n\n${message}`
         )}`;
         window.location.href = mailto;
         setStatus({ ok: true, msg: "Opening your mail client as a fallback..." });
       } catch (e) {
-        setStatus({ ok: false, msg: "Failed to send message. Please email arunboth36@gmail.com directly." });
+        setStatus({ ok: false, msg: "Failed to send message. Please email bothinnovations@gmail.com directly." });
       }
     } finally {
       setSending(false);
@@ -63,7 +63,7 @@ export default function ContactPage() {
           {/* Left: Contact form */}
           <section className="bg-white p-6 rounded-2xl shadow">
             <h1 className="text-2xl font-semibold mb-2">Contact Us</h1>
-            <p className="text-sm text-gray-600 mb-6">Questions, partnership requests or support — hum yahin madad karenge. Email: <a href="mailto:arunboth36@gmail.com" className="text-green-600 underline">arunboth36@gmail.com</a></p>
+            <p className="text-sm text-gray-600 mb-6">Questions, partnership requests or support — hum yahin madad karenge. Email: <a href="mailto:bothinnovations@gmail.com" className="text-green-600 underline">bothinnovations@gmail.com</a></p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Honeypot field (hidden from users) */}
@@ -111,10 +111,10 @@ export default function ContactPage() {
 
               <ul className="mt-3 text-sm text-gray-700 space-y-2">
                 <li>
-                  <strong>Email:</strong> <a href="mailto:arunboth36@gmail.com" className="text-green-600 underline">arunboth36@gmail.com</a>
+                  <strong>Email:</strong> <a href="mailto:bothinnovations@gmail.com" className="text-green-600 underline">bothinnovations@gmail.com</a>
                 </li>
                 <li>
-                  <strong>Phone:</strong> <a href="tel:+911234567890" className="text-gray-700 underline">+91 9205645691</a>
+                  <strong>Phone:</strong> <a href="tel:+919205645691" className="text-gray-700 underline">+91 9205645691</a>
                 </li>
                 <li>
                   <strong>Support:</strong> Typical response time 24 hours

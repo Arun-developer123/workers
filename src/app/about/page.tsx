@@ -65,7 +65,7 @@ export default function AboutPage() {
               <div className="bg-white p-4 rounded-lg shadow">
                 <dt className="text-sm text-gray-500">Contact</dt>
                 <dd className="mt-1 font-medium">
-                  <a href="mailto:arunboth36@gmail.com" className="hover:underline">arunboth36@gmail.com</a>
+                  <a href="mailto:bothinnovations@gmail.com" className="hover:underline">bothinnovations@gmail.com</a>
                 </dd>
               </div>
             </dl>
@@ -124,7 +124,7 @@ export default function AboutPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
             {[
-              { name: "Arun Both", role: "Founder & Product", mail: "arunboth36@gmail.com" },
+              { name: "Arun Both", role: "Founder & Product", mail: "bothinnovations@gmail.com" },
               
             ].map((p) => (
               <div key={p.name} className="bg-white p-4 rounded-lg shadow text-center">
@@ -177,7 +177,7 @@ export default function AboutPage() {
         <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-sm text-gray-600">© {new Date().getFullYear()} KaamLink. All rights reserved.</p>
           <p className="text-sm">
-            Built by <a href="mailto:arunboth36@gmail.com" className="text-green-600 hover:underline">Arun </a>
+            Built by <a href="mailto:bothinnovations@gmail.com" className="text-green-600 hover:underline">Arun </a>
           </p>
         </div>
       </footer>

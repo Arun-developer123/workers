@@ -241,7 +241,7 @@ export default function LandingPage() {
             <p className="text-sm text-gray-600 mt-2 max-w-sm">Connecting workers directly to work. Safe. Transparent. Local-first. Built with care for field realities.</p>
             <div className="mt-4 inline-flex items-center gap-2 text-sm text-gray-600">
               <Mail className="w-4 h-4" />
-              <a href="mailto:arunboth36@gmail.com" className="hover:underline">arunboth36@gmail.com</a>
+              <a href="mailto:bothinnovations@gmail.com" className="hover:underline">bothinnovations@gmail.com</a>
             </div>
           </div>
 

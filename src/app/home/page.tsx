@@ -8,6 +8,13 @@ import { FaShoppingCart, FaCar } from "react-icons/fa";
 import Link from "next/link";
 import ThreeDotsMenu from "@/components/ThreeDotsMenu";
 
+// allow TypeScript to accept window.Razorpay usage
+declare global {
+  interface Window {
+    Razorpay?: any;
+  }
+}
+
 // ==== Types ====
 interface Profile {
   occupation: string;
@@ -636,6 +643,119 @@ export default function HomePage() {
     }
   };
 
+  // ---------- Razorpay payment helpers (frontend) ----------
+  async function loadRazorpaySdk(): Promise<void> {
+    if (typeof window === "undefined") return;
+    if ((window as any).Razorpay) return;
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Razorpay SDK load failed"));
+      document.body.appendChild(script);
+    });
+  }
+
+  /**
+   * Start payment flow for contractor accepting an application.
+   * - fetches order from server
+   * - opens Razorpay checkout
+   * - on success calls verify endpoint
+   */
+  async function startPaymentForApplication(app: Application) {
+    if (!app || !app.id) return alert("Invalid application");
+    try {
+      // compute amount from contractor_wage OR resolveWageForApp fallback
+      const contractorWage = parseWage(app.contractor_wage as any) ?? resolveWageForApp(app);
+      if (contractorWage == null || contractorWage <= 0) {
+        return alert("Contractor wage invalid for payment");
+      }
+
+      // start spinner for this app
+      setOpUpdatingApp((p) => ({ ...p, [app.id]: true }));
+
+      // 1) create order on server
+      const createResp = await fetch("/api/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: app.id, amount: contractorWage }),
+      });
+
+      const createJson = await createResp.json();
+      if (!createResp.ok || !createJson?.order) {
+        console.error("create order failed", createJson);
+        alert("Order बनाते समय त्रुटि आई");
+        setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
+        return;
+      }
+
+      const { order } = createJson;
+      const keyId = createJson.keyId;
+
+      // 2) load SDK
+      await loadRazorpaySdk();
+
+      // 3) open checkout
+      const options = {
+        key: keyId,
+        amount: order.amount, // paise
+        currency: order.currency || "INR",
+        name: "Your App Name",
+        description: `Payment for application ${app.id}`,
+        order_id: order.id,
+        prefill: {
+          name: profile?.name || "",
+        },
+        handler: async function (response: any) {
+          // response contains: razorpay_payment_id, razorpay_order_id, razorpay_signature
+          try {
+            const verifyResp = await fetch("/api/razorpay/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                applicationId: app.id,
+                amount: contractorWage,
+              }),
+            });
+
+            const verifyJson = await verifyResp.json();
+            if (!verifyResp.ok || verifyJson?.error) {
+              console.error("verify failed", verifyJson);
+              alert("Payment verify में समस्या — console देखें");
+              setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
+              return;
+            }
+
+            alert("✅ Payment successful और Application accepted");
+            // refresh data
+            if (profile?.user_id) fetchContractorData(profile.user_id).catch(() => {});
+          } catch (err) {
+            console.error("post-verify error", err);
+            alert("Payment के बाद सर्वर में verify करते समय त्रुटि आई");
+          } finally {
+            setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            // user closed checkout
+            setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
+          },
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    } catch (err) {
+      console.error("startPaymentForApplication error", err);
+      alert("Payment शुरू करने में समस्या");
+      setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
+    }
+  }
+
   // ---------- Helper: compute displayed (contractor) wage ----------
   const computeDisplayedWage = (raw: string | number | null | undefined) => {
     const base = parseWage(raw);
@@ -1200,7 +1320,19 @@ export default function HomePage() {
                       <div className="flex flex-col gap-2 items-end">
                         {app.status === "pending" && (
                           <div className="flex gap-2">
-                            <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "accepted"); }} disabled={!!opUpdatingApp[app.id]} className="bg-blue-600 text-white py-2 px-3 rounded-lg">{opUpdatingApp[app.id] ? 'Processing...' : 'स्वीकारें'}</button>
+                            {/* REPLACED: Accept now triggers payment flow */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // start payment flow which will update application -> accepted after verification
+                                startPaymentForApplication(app);
+                              }}
+                              disabled={!!opUpdatingApp[app.id]}
+                              className="bg-blue-600 text-white py-2 px-3 rounded-lg"
+                            >
+                              {opUpdatingApp[app.id] ? 'Processing...' : 'स्वीकारें'}
+                            </button>
+
                             <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "rejected"); }} disabled={!!opUpdatingApp[app.id]} className="bg-red-600 text-white py-2 px-3 rounded-lg">{opUpdatingApp[app.id] ? 'Processing...' : 'अस्वीकारें'}</button>
                           </div>
                         )}

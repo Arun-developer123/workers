@@ -690,6 +690,10 @@ export default function HomePage() {
     });
   }
 
+  // type-guard to detect { error: ... } objects safely (no `any`)
+  const isErrorObject = (v: unknown): v is { error: unknown } =>
+    typeof v === "object" && v !== null && "error" in v;
+
   /**
    * Start payment flow for contractor accepting an application.
    * - fetches order from server
@@ -761,7 +765,9 @@ export default function HomePage() {
             });
 
             const verifyJson = await verifyResp.json();
-            if (!verifyResp.ok || (verifyJson && typeof verifyJson === "object" && "error" in (verifyJson as any))) {
+
+            // use type-guard instead of `any`
+            if (!verifyResp.ok || (verifyJson && isErrorObject(verifyJson))) {
               console.error("verify failed", verifyJson);
               alert("Payment verify में समस्या — console देखें");
               setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));

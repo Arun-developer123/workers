@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AudioButton from "@/components/AudioButton";
 import { FaShoppingCart, FaCar } from "react-icons/fa";
 import Link from "next/link";
 import ThreeDotsMenu from "@/components/ThreeDotsMenu";
-
 
 // ==== Types ====
 interface Profile {
@@ -90,46 +89,83 @@ export default function HomePage() {
   const [samePhoneProfiles, setSamePhoneProfiles] = useState<Profile[] | null>(null);
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [profilesModalOpen, setProfilesModalOpen] = useState(false);
+
+  // operation-level loading maps
+  const [opApplying, setOpApplying] = useState<{ [jobId: string]: boolean }>({});
+  const [opUpdatingApp, setOpUpdatingApp] = useState<{ [appId: string]: boolean }>({});
+  const [opStartShift, setOpStartShift] = useState<{ [appId: string]: boolean }>({});
+  const [opEndShift, setOpEndShift] = useState<{ [appId: string]: boolean }>({});
+
   const router = useRouter();
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    const storedProfile = localStorage.getItem("fake_user_profile");
-    if (!storedProfile) {
+    // mounted guard
+    mountedRef.current = true;
+    try {
+      const storedProfile = typeof window !== "undefined" ? localStorage.getItem("fake_user_profile") : null;
+      if (!storedProfile) {
+        router.push("/auth/sign-in");
+        return;
+      }
+
+      const parsedProfile: Profile | null = safeParseProfile(storedProfile);
+      if (!parsedProfile) {
+        // invalid data -> redirect to sign in
+        localStorage.removeItem("fake_user_profile");
+        router.push("/auth/sign-in");
+        return;
+      }
+
+      setProfile(parsedProfile);
+
+      // fetch profile image from DB (if available)
+      fetchProfileImage(parsedProfile.user_id).catch((e) => {
+        console.warn("fetchProfileImage failed", e);
+      });
+
+      // fetch common data for both roles
+      fetchMyRating(parsedProfile.user_id).catch((e) => console.warn(e));
+
+      if (parsedProfile.role === "worker") {
+        fetchJobs().catch((e) => console.warn(e)); // worker: uses shift_logs to filter available jobs
+      } else if (parsedProfile.role === "contractor") {
+        fetchContractorData(parsedProfile.user_id).catch((e) => console.warn(e));
+        fetchJobsForContractor(parsedProfile.user_id).catch((e) => console.warn(e));
+      }
+    } catch (err) {
+      console.error("initialization error", err);
       router.push("/auth/sign-in");
-      return;
     }
-    const parsedProfile: Profile = JSON.parse(storedProfile);
-    setProfile(parsedProfile);
 
-    // fetch profile image from DB (if available)
-    fetchProfileImage(parsedProfile.user_id).catch((e) => {
-      console.warn("fetchProfileImage failed", e);
-    });
-
-    // fetch common data for both roles
-    fetchMyRating(parsedProfile.user_id);
-
-    if (parsedProfile.role === "worker") {
-      fetchJobs(); // worker: uses shift_logs to filter available jobs
-    } else if (parsedProfile.role === "contractor") {
-      fetchContractorData(parsedProfile.user_id);
-      fetchJobsForContractor(parsedProfile.user_id);
-    }
+    return () => {
+      mountedRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // utility: determine whether profile has completed eKYC
-const isEkycComplete = (p: Profile | null) => {
-  if (!p) return false;
-  // prefer explicit boolean
-  if (typeof p.is_ekyc_complete === "boolean") return p.is_ekyc_complete;
-  // fallback to status
-  if (p.ekyc_status === "verified") return true;
-  // fallback to masked aadhaar presence
-  if (p.aadhaar_masked && p.aadhaar_masked.length >= 4) return true;
-  return false;
-};
+  // safe parser to avoid throwing
+  function safeParseProfile(raw: string): Profile | null {
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object" || !obj.user_id) return null;
+      return obj as Profile;
+    } catch (e) {
+      return null;
+    }
+  }
 
+  // utility: determine whether profile has completed eKYC
+  const isEkycComplete = (p: Profile | null) => {
+    if (!p) return false;
+    // prefer explicit boolean
+    if (typeof p.is_ekyc_complete === "boolean") return p.is_ekyc_complete;
+    // fallback to status
+    if (p.ekyc_status === "verified") return true;
+    // fallback to masked aadhaar presence
+    if (p.aadhaar_masked && p.aadhaar_masked.length >= 4) return true;
+    return false;
+  };
 
   useEffect(() => {
     // typed CustomEvent carrying a Profile in detail
@@ -177,7 +213,6 @@ const isEkycComplete = (p: Profile | null) => {
           .single();
 
         if (!pErr && profRow) {
-          // typed cast into expected shape (avoid any)
           const typed = profRow as { phone?: string } | null;
           phoneToQuery = typed?.phone;
         }
@@ -189,10 +224,7 @@ const isEkycComplete = (p: Profile | null) => {
       }
 
       setProfilesLoading(true);
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("phone", phoneToQuery);
+      const { data, error } = await supabase.from("profiles").select("*").eq("phone", phoneToQuery);
 
       if (error) {
         console.error("fetchProfilesWithSamePhone error", error);
@@ -213,7 +245,11 @@ const isEkycComplete = (p: Profile | null) => {
   // when user chooses a profile from the list, store it (same as sign-in) and redirect
   const switchToProfile = (p: Profile) => {
     // save selected profile
-    localStorage.setItem("fake_user_profile", JSON.stringify(p));
+    try {
+      localStorage.setItem("fake_user_profile", JSON.stringify(p));
+    } catch (e) {
+      console.warn("localStorage set failed", e);
+    }
 
     // close modal UI
     setProfilesModalOpen(false);
@@ -234,22 +270,16 @@ const isEkycComplete = (p: Profile | null) => {
 
   // fetch profile image URL
   const fetchProfileImage = async (userId: string) => {
+    if (!userId) return;
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("profile_image_url")
-        .eq("user_id", userId)
-        .single();
+      const { data, error } = await supabase.from("profiles").select("profile_image_url").eq("user_id", userId).single();
       if (error) {
+        // not fatal — keep default
         return;
       }
       const profileRow = data as { profile_image_url?: string } | null;
       const img = profileRow?.profile_image_url ?? null;
-      if (img) {
-        setProfileImageUrl(img);
-      } else {
-        setProfileImageUrl(null);
-      }
+      if (mountedRef.current) setProfileImageUrl(img);
     } catch (err) {
       console.warn("fetchProfileImage unexpected", err);
     }
@@ -258,14 +288,11 @@ const isEkycComplete = (p: Profile | null) => {
   // Worker → Available Jobs (all jobs) BUT: filter out jobs that have only completed shifts (i.e. existed shift_logs and none ongoing)
   const fetchJobs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
 
       if (error) {
         console.error("fetchJobs error", error);
-        setJobs([]);
+        if (mountedRef.current) setJobs([]);
         return;
       }
 
@@ -273,7 +300,7 @@ const isEkycComplete = (p: Profile | null) => {
 
       // if no jobs, quick return
       if (allJobs.length === 0) {
-        setJobs([]);
+        if (mountedRef.current) setJobs([]);
         return;
       }
 
@@ -281,15 +308,12 @@ const isEkycComplete = (p: Profile | null) => {
       const jobIds = allJobs.map((j) => j.id).filter(Boolean);
 
       // fetch shift_logs for these jobs
-      const { data: shiftsData, error: shiftsErr } = await supabase
-        .from("shift_logs")
-        .select("job_id, status")
-        .in("job_id", jobIds);
+      const { data: shiftsData, error: shiftsErr } = await supabase.from("shift_logs").select("job_id, status").in("job_id", jobIds);
 
       if (shiftsErr) {
         // if shift fetch failed, fallback to showing all jobs (safer)
         console.error("fetch shift_logs error", shiftsErr);
-        setJobs(allJobs);
+        if (mountedRef.current) setJobs(allJobs);
         return;
       }
 
@@ -316,30 +340,27 @@ const isEkycComplete = (p: Profile | null) => {
         return false;
       });
 
-      setJobs(filtered);
+      if (mountedRef.current) setJobs(filtered);
     } catch (err) {
       console.error("fetchJobs unexpected", err);
-      setJobs([]);
+      if (mountedRef.current) setJobs([]);
     }
   };
 
   // Contractor → fetch jobs posted by contractor (contractor should still see their jobs even if completed; keep original behavior)
   const fetchJobsForContractor = async (userId: string) => {
+    if (!userId) return;
     try {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("*")
-        .eq("contractor_id", userId)
-        .order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("jobs").select("*").eq("contractor_id", userId).order("created_at", { ascending: false });
       if (error) {
         console.error("fetchJobsForContractor error", error);
-        setJobs([]);
+        if (mountedRef.current) setJobs([]);
         return;
       }
-      setJobs((data as Job[]) || []);
+      if (mountedRef.current) setJobs((data as Job[]) || []);
     } catch (err) {
       console.error("fetchJobsForContractor unexpected", err);
-      setJobs([]);
+      if (mountedRef.current) setJobs([]);
     }
   };
 
@@ -385,6 +406,7 @@ const isEkycComplete = (p: Profile | null) => {
 
   // Contractor → Applications + join shift_logs + pending OTPs
   const fetchContractorData = async (userId: string) => {
+    if (!userId) return;
     try {
       const { data: apps, error } = await supabase
         .from("applications")
@@ -394,12 +416,12 @@ const isEkycComplete = (p: Profile | null) => {
 
       if (error) {
         console.error("fetchContractorData error", error);
-        setApplications([]);
+        if (mountedRef.current) setApplications([]);
         return;
       }
 
       if (!apps) {
-        setApplications([]);
+        if (mountedRef.current) setApplications([]);
         return;
       }
 
@@ -410,10 +432,7 @@ const isEkycComplete = (p: Profile | null) => {
       const mapPhone: { [key: string]: string } = {};
       const mapWage: { [key: string]: number | null } = {};
       if (workerIds.length > 0) {
-        const { data: workersData, error: workersErr } = await supabase
-          .from("profiles")
-          .select("user_id, phone, wage")
-          .in("user_id", workerIds);
+        const { data: workersData, error: workersErr } = await supabase.from("profiles").select("user_id, phone, wage").in("user_id", workerIds);
 
         if (workersErr) {
           console.error("fetch worker profiles error", workersErr);
@@ -425,27 +444,27 @@ const isEkycComplete = (p: Profile | null) => {
           mapWage[w.user_id] = wnum;
         });
 
-        setWorkersMap(mapPhone);
-        setWorkerWageMap(mapWage);
+        if (mountedRef.current) {
+          setWorkersMap(mapPhone);
+          setWorkerWageMap(mapWage);
+        }
       } else {
-        setWorkersMap({});
-        setWorkerWageMap({});
+        if (mountedRef.current) {
+          setWorkersMap({});
+          setWorkerWageMap({});
+        }
       }
 
       // fetch jobs by ids
       const jobIds = Array.from(new Set(applicationsData.map((a) => a.job_id).filter(Boolean)));
       const jobsDataById: { [key: string]: Job } = {};
       if (jobIds.length > 0) {
-        const { data: jobsData, error: jobsErr } = await supabase
-          .from("jobs")
-          .select("*")
-          .in("id", jobIds);
+        const { data: jobsData, error: jobsErr } = await supabase.from("jobs").select("*").in("id", jobIds);
 
         if (jobsErr) {
           console.error("fetch jobs by ids error", jobsErr);
         } else {
           ((jobsData as Job[]) || []).forEach((j) => {
-            // parseWage returns number|null — keep Job.wage as number|string|null
             const wageNum = parseWage(j.wage);
             jobsDataById[j.id] = { ...(j as Job), wage: wageNum } as Job;
           });
@@ -455,10 +474,7 @@ const isEkycComplete = (p: Profile | null) => {
       // fetch shift_logs
       let shifts: ShiftLog[] | null = null;
       if (jobIds.length > 0) {
-        const { data: shiftsData } = await supabase
-          .from("shift_logs")
-          .select("worker_id, contractor_id, job_id, status, id")
-          .in("job_id", jobIds);
+        const { data: shiftsData } = await supabase.from("shift_logs").select("worker_id, contractor_id, job_id, status, id").in("job_id", jobIds);
         shifts = shiftsData as ShiftLog[] | null;
       }
 
@@ -510,7 +526,7 @@ const isEkycComplete = (p: Profile | null) => {
       // Filter out applications for jobs that are "done" so that on reload they no longer appear in contractor dashboard
       const filteredMerged = merged.filter((app) => !doneJobIds.has(app.job_id));
 
-      setApplications(filteredMerged);
+      if (mountedRef.current) setApplications(filteredMerged);
 
       // pending OTPs for this contractor (unused and not expired)
       const nowIso = new Date().toISOString();
@@ -523,7 +539,7 @@ const isEkycComplete = (p: Profile | null) => {
 
       if (otpsErr) {
         console.error("fetch OTPs error", otpsErr);
-        setPendingOtpsMap({});
+        if (mountedRef.current) setPendingOtpsMap({});
         return;
       }
 
@@ -533,16 +549,19 @@ const isEkycComplete = (p: Profile | null) => {
         if (!mapByApp[o.application_id]) mapByApp[o.application_id] = [];
         mapByApp[o.application_id].push(o);
       });
-      setPendingOtpsMap(mapByApp);
+      if (mountedRef.current) setPendingOtpsMap(mapByApp);
     } catch (err) {
       console.error("fetchContractorData unexpected", err);
-      setApplications([]);
-      setPendingOtpsMap({});
+      if (mountedRef.current) {
+        setApplications([]);
+        setPendingOtpsMap({});
+      }
     }
   };
 
   // Worker → Apply Job
   const applyJob = async (jobId: string) => {
+    if (!profile) return alert("प्रोफ़ाइल लोड नहीं हुई। फिर से साइन-इन करें।");
     try {
       const contractorId = jobs.find((j) => j.id === jobId)?.contractor_id;
       if (!contractorId) return alert("❌ Contractor ID नहीं मिली");
@@ -551,6 +570,9 @@ const isEkycComplete = (p: Profile | null) => {
       if (!wageStr) return;
       const wageNum = Number(wageStr);
       if (isNaN(wageNum) || wageNum <= 0) return alert("कृपया वैध संख्या दर्ज करें");
+
+      // mark applying
+      setOpApplying((p) => ({ ...p, [jobId]: true }));
 
       const plusTen = wageNum * 1.1;
 
@@ -579,17 +601,20 @@ const isEkycComplete = (p: Profile | null) => {
         alert("आवेदन भेजने में समस्या ❌");
       } else {
         alert("✅ आवेदन भेज दिया गया — contractor को आपका प्रस्ताव दिख जाएगा");
-        if (profile?.role === "worker") fetchJobs();
-        if (profile?.role === "contractor") fetchContractorData(profile.user_id);
+        if (profile?.role === "worker") fetchJobs().catch(() => {});
+        if (profile?.role === "contractor" && profile.user_id) fetchContractorData(profile.user_id).catch(() => {});
       }
     } catch (err) {
       console.error("applyJob unexpected", err);
       alert("कुछ गलत हुआ — बाद में कोशिश करें");
+    } finally {
+      setOpApplying((p) => ({ ...p, [jobId]: false }));
     }
   };
 
   // Contractor → Accept/Reject (NO payment RPCs)
   const updateApplication = async (appId: string, status: "accepted" | "rejected") => {
+    setOpUpdatingApp((p) => ({ ...p, [appId]: true }));
     try {
       const { error } = await supabase.from("applications").update({ status }).eq("id", appId);
       if (error) {
@@ -599,20 +624,22 @@ const isEkycComplete = (p: Profile | null) => {
 
       setApplications((prev) => prev.map((x) => (x.id === appId ? { ...x, status } : x)));
       if (profile?.user_id) {
-        fetchContractorData(profile.user_id);
+        fetchContractorData(profile.user_id).catch(() => {});
       }
 
       alert(status === "accepted" ? "✅ आवेदन स्वीकार कर दिया गया" : "✅ आवेदन अस्वीकृत कर दिया गया");
     } catch (err) {
       console.error("updateApplication unexpected", err);
       alert("❌ आवेदन अपडेट में समस्या आई");
+    } finally {
+      setOpUpdatingApp((p) => ({ ...p, [appId]: false }));
     }
   };
 
   // ---------- Helper: compute displayed (contractor) wage ----------
   const computeDisplayedWage = (raw: string | number | null | undefined) => {
     const base = parseWage(raw);
-    if (!base || isNaN(base) || base <= 0) return 0;
+    if (base == null || isNaN(base) || base <= 0) return 0;
     const marked = base * 1.1; // +10%
     const roundedUp50 = Math.ceil(marked / 50) * 50;
     return roundedUp50;
@@ -620,12 +647,14 @@ const isEkycComplete = (p: Profile | null) => {
 
   // Worker → Start Shift (only shift log + OTP flows)
   const startShift = async (app: Application) => {
-    try {
-      if (app.status !== "accepted") {
-        alert("❌ शिफ्ट शुरू करने से पहले आवेदन को स्वीकार होना चाहिए");
-        return;
-      }
+    if (!app || !app.id) return;
+    if (app.status !== "accepted") {
+      alert("❌ शिफ्ट शुरू करने से पहले आवेदन को स्वीकार होना चाहिए");
+      return;
+    }
 
+    setOpStartShift((p) => ({ ...p, [app.id]: true }));
+    try {
       const { error: insertShiftErr } = await supabase.from("shift_logs").insert({
         worker_id: app.worker_id,
         contractor_id: app.contractor_id,
@@ -641,77 +670,95 @@ const isEkycComplete = (p: Profile | null) => {
       }
 
       alert("✅ शिफ्ट शुरू कर दी गई");
-      fetchContractorData(app.contractor_id);
-      // refresh available jobs because a new ongoing was created (so job should remain visible)
-      if (profile?.role === "worker") fetchJobs();
+      fetchContractorData(app.contractor_id).catch(() => {});
+      if (profile?.role === "worker") fetchJobs().catch(() => {});
     } catch (err) {
       console.error("startShift unexpected", err);
       alert("❌ शिफ्ट शुरू करने में समस्या");
+    } finally {
+      setOpStartShift((p) => ({ ...p, [app.id]: false }));
     }
   };
 
   // Worker → End Shift (contractor side helper) — no payment logic here
   const endShift = async (app: Application) => {
-    const { error } = await supabase
-      .from("shift_logs")
-      .update({
-        end_time: new Date().toISOString(),
-        status: "completed",
-      })
-      .eq("worker_id", app.worker_id)
-      .eq("job_id", app.job_id)
-      .eq("status", "ongoing");
+    if (!app || !app.id) return;
+    setOpEndShift((p) => ({ ...p, [app.id]: true }));
+    try {
+      const { error } = await supabase
+        .from("shift_logs")
+        .update({
+          end_time: new Date().toISOString(),
+          status: "completed",
+        })
+        .eq("worker_id", app.worker_id)
+        .eq("job_id", app.job_id)
+        .eq("status", "ongoing");
 
-    if (error) {
+      if (error) {
+        alert("❌ शिफ्ट समाप्त करने में समस्या");
+        return;
+      }
+      alert("✅ शिफ्ट समाप्त हो गई");
+      fetchContractorData(app.contractor_id).catch(() => {});
+      if (profile?.role === "worker") fetchJobs().catch(() => {});
+    } catch (err) {
+      console.error(err);
       alert("❌ शिफ्ट समाप्त करने में समस्या");
-      return;
+    } finally {
+      setOpEndShift((p) => ({ ...p, [app.id]: false }));
     }
-    alert("✅ शिफ्ट समाप्त हो गई");
-    fetchContractorData(app.contractor_id);
-    // refresh available jobs because if this job now has only completed entries it should be removed
-    if (profile?.role === "worker") fetchJobs();
   };
 
   // Contractor → Rate Worker
   const rateWorker = async (app: Application) => {
-    const rating = prompt("⭐ Worker को रेट करें (1-5):");
+    const ratingStr = prompt("⭐ Worker को रेट करें (1-5):");
+    if (!ratingStr) return;
+    const rating = Number(ratingStr);
+    if (isNaN(rating) || rating < 1 || rating > 5) return alert("कृपया 1 से 5 के बीच एक वैध रेटिंग दें");
     const review = prompt("✍ Review लिखें (optional):");
-    if (!rating) return;
 
-    const { error } = await supabase.from("ratings").insert({
-      rater_id: profile?.user_id,
-      rated_id: app.worker_id,
-      job_id: app.job_id,
-      rating: Number(rating),
-      review: review || "",
-    });
+    try {
+      const { error } = await supabase.from("ratings").insert({
+        rater_id: profile?.user_id,
+        rated_id: app.worker_id,
+        job_id: app.job_id,
+        rating: rating,
+        review: review || "",
+      });
 
-    if (error) alert("❌ Rating save नहीं हुई");
-    else {
-      alert("✅ Rating save हो गई");
-      setRatingsGiven({ ...ratingsGiven, [app.id]: true });
-      setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || true }));
+      if (error) {
+        alert("❌ Rating save नहीं हुई");
+      } else {
+        alert("✅ Rating save हो गई");
+        setRatingsGiven((p) => ({ ...p, [app.id]: true }));
+        setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || true }));
+      }
+    } catch (err) {
+      console.error("rateWorker error", err);
+      alert("❌ Rating save में समस्या");
     }
   };
 
   // Fetch average rating for a user (works for both worker & contractor)
   const fetchMyRating = async (userId: string) => {
+    if (!userId) return;
     try {
       const { data, error } = await supabase.from("ratings").select("rating").eq("rated_id", userId);
       if (error) {
         console.error("fetchMyRating error", error);
-        setMyRating(null);
+        if (mountedRef.current) setMyRating(null);
         return;
       }
       if (!data || data.length === 0) {
-        setMyRating(null);
+        if (mountedRef.current) setMyRating(null);
         return;
       }
       const avg = (data as { rating: number }[]).reduce((sum, r) => sum + (r.rating || 0), 0) / data.length;
-      setMyRating(Number(avg.toFixed(1)));
+      if (mountedRef.current) setMyRating(Number(avg.toFixed(1)));
     } catch (err) {
       console.error("fetchMyRating unexpected", err);
-      setMyRating(null);
+      if (mountedRef.current) setMyRating(null);
     }
   };
 
@@ -764,188 +811,183 @@ const isEkycComplete = (p: Profile | null) => {
       </div>
 
       {/* ===== Join Safety Fund (glowing CTA) — केवल Worker के लिए ===== */}
-{profile?.role === "worker" && (
-  <div className="mt-4 flex justify-center">
-    <button
-      type="button"
-      onClick={() => router.push("/safety-fund-details")}
-      className="inline-flex items-center gap-3 px-5 py-3 rounded-full text-sm font-semibold
-                 bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-lg
-                 ring-4 ring-amber-300/30 hover:scale-[1.02] transform transition
-                 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400"
-      aria-label="Join Safety Fund"
-    >
-      <svg className="w-5 h-5 -ml-1" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M12 2v20" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M5 12h14" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-      Join Safety Fund — ₹20 / month
-      <span className="ml-2 text-xs bg-white/20 px-2 py-1 rounded-full">Voluntary</span>
-    </button>
-  </div>
-)}
-
-
+      {profile?.role === "worker" && (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => router.push("/safety-fund-details")}
+            className="inline-flex items-center gap-3 px-5 py-3 rounded-full text-sm font-semibold
+                   bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-lg
+                   ring-4 ring-amber-300/30 hover:scale-[1.02] transform transition
+                   focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400"
+            aria-label="Join Safety Fund"
+          >
+            <svg className="w-5 h-5 -ml-1" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 2v20" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+              <path d="M5 12h14" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+            Join Safety Fund — ₹20 / month
+            <span className="ml-2 text-xs bg-white/20 px-2 py-1 rounded-full">Voluntary</span>
+          </button>
+        </div>
+      )}
 
       {/* IMPORTANT eKYC banner: show if eKYC not complete */}
-{!isEkycComplete(profile) && (
-  <div className="mb-6 p-4 rounded-xl border-2 border-red-300 bg-red-50 text-red-900 shadow-sm">
-    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-      <div>
-        <div className="font-bold text-lg">महत्वपूर्ण: आपकी eKYC पूरी नहीं हुई</div>
-        <div className="text-sm mt-1 opacity-90">
-          आपकी eKYC पूरी नहीं होने के कारण आपको अभी काम नहीं मिलेगा और सरकारी योजनाओं/भुगतान के लिए पात्रता नहीं बनेगी। कृपया तुरंत eKYC पूरा करें।
+      {!isEkycComplete(profile) && (
+        <div className="mb-6 p-4 rounded-xl border-2 border-red-300 bg-red-50 text-red-900 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <div className="font-bold text-lg">महत्वपूर्ण: आपकी eKYC पूरी नहीं हुई</div>
+              <div className="text-sm mt-1 opacity-90">
+                आपकी eKYC पूरी नहीं होने के कारण आपको अभी काम नहीं मिलेगा और सरकारी योजनाओं/भुगतान के लिए पात्रता नहीं बनेगी। कृपया तुरंत eKYC पूरा करें।
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  // navigate to eKYC completion page with user id param
+                  router.push(`/ekyc/complete?user_id=${encodeURIComponent(profile.user_id)}`);
+                }}
+                className="bg-red-600 text-white py-2 px-4 rounded-lg font-semibold shadow hover:opacity-95"
+              >
+                अभी eKYC करें
+              </button>
+            </div>
+          </div>
+          {/* ---------- Role-specific bottom nav (mobile) ---------- */}
+          {profile.role === "worker" ? (
+            <nav
+              aria-label="Worker Primary"
+              className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
+                 bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/svari")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+                aria-label="Svari"
+              >
+                <FaCar className="w-5 h-5" />
+                <span className="text-sm font-medium">Svari</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/shop")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+                aria-label="Shop"
+              >
+                <FaShoppingCart className="w-5 h-5" />
+                <span className="text-sm font-medium">Shop</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/applications")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+                aria-label="My applications"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+                <span className="text-sm font-medium">Applications</span>
+              </button>
+            </nav>
+          ) : (
+            /* contractor mobile nav */
+            <nav
+              aria-label="Contractor Primary"
+              className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
+                 bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/jobs/new")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+              >
+                <span className="text-sm font-medium">नया काम डालें ➕</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/workers")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+              >
+                <span className="text-sm font-medium">Workers देखें 👥</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/contractor/materials")}
+                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
+              >
+                <span className="text-sm font-medium">🧱 Materials</span>
+              </button>
+            </nav>
+          )}
+
+          {/* ---------- Role-specific floating cluster (desktop) ---------- */}
+          {profile.role === "worker" ? (
+            <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/svari")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+                aria-label="Svari"
+              >
+                <FaCar className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/shop")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+                aria-label="Shop"
+              >
+                <FaShoppingCart className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/applications")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+                aria-label="Applications"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/jobs/new")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+              >
+                <span className="sr-only">नया काम डालें</span>
+                <div className="text-sm font-medium">➕</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/workers")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+              >
+                <span className="sr-only">Workers देखें</span>
+                <div className="text-sm font-medium">👥</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/contractor/materials")}
+                className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
+              >
+                <span className="sr-only">Materials</span>
+                <div className="text-sm font-medium">🧱</div>
+              </button>
+            </div>
+          )}
         </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => {
-            // navigate to eKYC completion page with user id param
-            router.push(`/ekyc/complete?user_id=${encodeURIComponent(profile.user_id)}`);
-          }}
-          className="bg-red-600 text-white py-2 px-4 rounded-lg font-semibold shadow hover:opacity-95"
-        >
-          अभी eKYC करें
-        </button>
-      </div>
-    </div>
-    {/* ---------- Role-specific bottom nav (mobile) ---------- */}
-{profile.role === "worker" ? (
-  <nav
-    aria-label="Worker Primary"
-    className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
-               bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
-  >
-    <button
-      type="button"
-      onClick={() => router.push("/svari")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-      aria-label="Svari"
-    >
-      <FaCar className="w-5 h-5" />
-      <span className="text-sm font-medium">Svari</span>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/shop")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-      aria-label="Shop"
-    >
-      <FaShoppingCart className="w-5 h-5" />
-      <span className="text-sm font-medium">Shop</span>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/applications")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-      aria-label="My applications"
-    >
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-      <span className="text-sm font-medium">Applications</span>
-    </button>
-  </nav>
-) : (
-  /* contractor mobile nav */
-  <nav
-    aria-label="Contractor Primary"
-    className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 w-[min(980px,94%)] max-w-2xl
-               bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl shadow-lg p-2 flex items-center justify-between md:hidden"
-  >
-    <button
-      type="button"
-      onClick={() => router.push("/jobs/new")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    >
-      <span className="text-sm font-medium">नया काम डालें ➕</span>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/workers")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    >
-      <span className="text-sm font-medium">Workers देखें 👥</span>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/contractor/materials")}
-      className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-gray-50 focus:outline-none"
-    >
-      <span className="text-sm font-medium">🧱 Materials</span>
-    </button>
-  </nav>
-)}
-
-{/* ---------- Role-specific floating cluster (desktop) ---------- */}
-{profile.role === "worker" ? (
-  <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
-    <button
-      type="button"
-      onClick={() => router.push("/svari")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-      aria-label="Svari"
-    >
-      <FaCar className="w-5 h-5" />
-    </button>
-    <button
-      type="button"
-      onClick={() => router.push("/shop")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-      aria-label="Shop"
-    >
-      <FaShoppingCart className="w-5 h-5" />
-    </button>
-    <button
-      type="button"
-      onClick={() => router.push("/applications")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-      aria-label="Applications"
-    >
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    </button>
-  </div>
-) : (
-  <div className="hidden md:flex fixed right-6 bottom-8 z-40 flex-col gap-3">
-    <button
-      type="button"
-      onClick={() => router.push("/jobs/new")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    >
-      <span className="sr-only">नया काम डालें</span>
-      <div className="text-sm font-medium">➕</div>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/workers")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    >
-      <span className="sr-only">Workers देखें</span>
-      <div className="text-sm font-medium">👥</div>
-    </button>
-
-    <button
-      type="button"
-      onClick={() => router.push("/contractor/materials")}
-      className="bg-white p-3 rounded-full shadow hover:scale-[1.03] transition transform"
-    >
-      <span className="sr-only">Materials</span>
-      <div className="text-sm font-medium">🧱</div>
-    </button>
-  </div>
-)}
-
-  </div>
-)}
-
-
+      )}
 
       {/* ---------------- Profiles modal (shows when profilesModalOpen is true) ---------------- */}
       {profilesModalOpen && (
@@ -1037,9 +1079,7 @@ const isEkycComplete = (p: Profile | null) => {
             <h2 className="text-xl font-semibold flex items-center gap-2">Worker Dashboard <AudioButton text="वर्कर डैशबोर्ड देखें" /></h2>
 
             {/* compact placeholder (actions moved to bottom navbar) */}
-<ThreeDotsMenu profileRole={profile.role} profile={profile} />
-
-
+            <ThreeDotsMenu profileRole={profile.role} profile={profile} />
 
           </div>
 
@@ -1070,7 +1110,9 @@ const isEkycComplete = (p: Profile | null) => {
 
                     <div className="flex flex-col gap-2 items-end md:items-center md:justify-center">
                       <div className="flex flex-col gap-2">
-                        <button onClick={() => applyJob(job.id)} className="bg-gradient-to-r from-green-500 to-lime-500 text-white py-2 px-4 rounded-lg font-semibold">आवेदन करें ✅</button>
+                        <button onClick={() => applyJob(job.id)} disabled={!!opApplying[job.id]} className="bg-gradient-to-r from-green-500 to-lime-500 text-white py-2 px-4 rounded-lg font-semibold">
+                          {opApplying[job.id] ? "Applying..." : "आवेदन करें ✅"}
+                        </button>
                         <button onClick={() => toggleJobExpand(job.id)} className="text-sm underline opacity-80">{expandedJobs[job.id] ? "डिस्क्रिप्शन छुपाएँ" : "डिटेल देखें"}</button>
                       </div>
                     </div>
@@ -1088,7 +1130,7 @@ const isEkycComplete = (p: Profile | null) => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">Contractor Dashboard <AudioButton text="कॉन्ट्रैक्टर डैशबोर्ड देखें" /></h2>
             {/* actions moved to bottom navbar */}
-<ThreeDotsMenu profileRole={profile.role} profile={profile} />
+            <ThreeDotsMenu profileRole={profile.role} profile={profile} />
 
 
           </div>
@@ -1158,8 +1200,8 @@ const isEkycComplete = (p: Profile | null) => {
                       <div className="flex flex-col gap-2 items-end">
                         {app.status === "pending" && (
                           <div className="flex gap-2">
-                            <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "accepted"); }} className="bg-blue-600 text-white py-2 px-3 rounded-lg">स्वीकारें</button>
-                            <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "rejected"); }} className="bg-red-600 text-white py-2 px-3 rounded-lg">अस्वीकारें</button>
+                            <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "accepted"); }} disabled={!!opUpdatingApp[app.id]} className="bg-blue-600 text-white py-2 px-3 rounded-lg">{opUpdatingApp[app.id] ? 'Processing...' : 'स्वीकारें'}</button>
+                            <button onClick={(e) => { e.stopPropagation(); updateApplication(app.id, "rejected"); }} disabled={!!opUpdatingApp[app.id]} className="bg-red-600 text-white py-2 px-3 rounded-lg">{opUpdatingApp[app.id] ? 'Processing...' : 'अस्वीकारें'}</button>
                           </div>
                         )}
 

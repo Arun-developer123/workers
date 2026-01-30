@@ -91,7 +91,8 @@ export default function MyApplicationsPage() {
 
   useEffect(() => {
     const fetchApplications = async () => {
-      const storedProfile = localStorage.getItem("fake_user_profile");
+      setLoading(true);
+      const storedProfile = typeof window !== "undefined" ? localStorage.getItem("fake_user_profile") : null;
       if (!storedProfile) {
         router.push("/auth/sign-in");
         return;
@@ -192,13 +193,13 @@ export default function MyApplicationsPage() {
           }
         }
 
-        // set applications (with phone merged where available)
-        setApplications(appsWithPhone);
+        // set applications (with phone merged where available) temporarily
+        // but we'll remove completed apps below
+        // setApplications(appsWithPhone);
 
-        // --- fetch shift_logs and ratings for the fetched applications so we can show "Job Done" ---
+        // --- fetch shift_logs for these applications (worker_id + job_id + contractor_id matching) ---
         const jobIds = Array.from(new Set(appsWithPhone.map((a) => a.job_id).filter(Boolean)));
 
-        // fetch shift_logs for this worker across these jobs (only if jobIds not empty)
         let shifts: ShiftLog[] = [];
         if (jobIds.length > 0) {
           const { data: shiftsData, error: shiftsErr } = await supabase
@@ -214,9 +215,10 @@ export default function MyApplicationsPage() {
           }
         }
 
-        // Map shifts to applications by matching job_id + contractor_id
-        // IMPORTANT: only treat a shift as "active" if its status === 'ongoing' and pick the latest ongoing shift
+        // Map latest shift to each application by matching job_id + contractor_id + worker_id
         const activeShiftMap: ActiveShifts = {};
+        const latestShiftByAppId: { [appId: string]: ShiftLog | null } = {};
+
         appsWithPhone.forEach((app) => {
           const related = shifts
             .filter((s) => s.job_id === app.job_id && s.contractor_id === app.contractor_id && s.worker_id === profile.user_id)
@@ -226,17 +228,14 @@ export default function MyApplicationsPage() {
               return tb - ta;
             });
 
+          // pick latest shift regardless of status (ongoing or completed)
           const latest = related[0] ?? null;
-          activeShiftMap[app.id] = latest && latest.status === "ongoing" ? latest : null;
+          // store latest shift (even if completed) so UI can correctly decide what to show
+          activeShiftMap[app.id] = latest;
+          latestShiftByAppId[app.id] = latest;
         });
 
-        // debug: show what we found
-        // eslint-disable-next-line no-console
-        console.debug("activeShiftMap:", activeShiftMap);
-
-        setActiveShift(activeShiftMap);
-
-        // fetch ratings already submitted BY THIS WORKER for these jobs -> so we know if rating exists
+        // Build ratingsGiven map keyed by application id (if this worker has rated that job)
         let ratings: { id: string; job_id: string; rater_id: string }[] = [];
         if (jobIds.length > 0) {
           const { data: ratingsData, error: ratingsErr } = await supabase
@@ -252,22 +251,32 @@ export default function MyApplicationsPage() {
           }
         }
 
-        // Build ratingsGiven map keyed by application id (if this worker has rated that job)
         const ratingsMap: { [appId: string]: boolean } = {};
         appsWithPhone.forEach((app) => {
           const hasRated = ratings.some((r) => r.job_id === app.job_id);
           ratingsMap[app.id] = !!hasRated;
         });
-        setRatingsGiven(ratingsMap);
 
-        // Build completedApps: shift completed && rating present
+        // completedApps: true when latest shift exists and status === 'completed'
         const completedMap: { [appId: string]: boolean } = {};
         appsWithPhone.forEach((app) => {
-          const shift = activeShiftMap[app.id];
-          const shiftCompleted = !!shift && shift.status === "completed";
-          completedMap[app.id] = shiftCompleted && !!ratingsMap[app.id];
+          const latest = latestShiftByAppId[app.id];
+          const shiftCompleted = !!latest && latest.status === "completed";
+          completedMap[app.id] = shiftCompleted;
         });
+
+        // Remove completed applications from worker dashboard (auto-delete behavior you requested)
+        const remainingApps = appsWithPhone.filter((app) => {
+          const latest = latestShiftByAppId[app.id];
+          const shiftCompleted = !!latest && latest.status === "completed";
+          return !shiftCompleted;
+        });
+
+        // set the state values
+        setActiveShift(activeShiftMap);
+        setRatingsGiven(ratingsMap);
         setCompletedApps(completedMap);
+        setApplications(remainingApps);
       } catch (err) {
         console.error("❌ Applications fetch error:", err);
         alert("Applications fetch में समस्या हुई");
@@ -285,7 +294,6 @@ export default function MyApplicationsPage() {
   };
 
   // Create OTP record in DB (shift_otps) for contractor to see on their dashboard.
-  // (applications page) replace createOtpRecord with this (or add the debug lines)
   const createOtpRecord = async (payload: {
     application_id: string;
     contractor_id: string;
@@ -425,7 +433,7 @@ export default function MyApplicationsPage() {
       const shift: ShiftLog = shiftData as ShiftLog;
       alert("✅ शिफ्ट सफलतापूर्वक शुरू हो गई।");
 
-      // set active shift for this application
+      // set active shift for this application (store ongoing shift)
       setActiveShift((prev) => ({ ...prev, [app.id]: shift }));
     } catch (err) {
       console.error("startShift unexpected", err);
@@ -494,13 +502,14 @@ export default function MyApplicationsPage() {
       }
 
       alert("✅ शिफ्ट पूर्ण हुई — अब आप contractor को रेट कर सकते हैं।");
-      // clear active shift for this app
-      setActiveShift((prev) => ({ ...prev, [app.id]: null }));
+      // update activeShift for UI to reflect completed status
+      setActiveShift((prev) => ({ ...prev, [app.id]: { ...shift, status: "completed", end_time: new Date().toISOString() } as ShiftLog }));
+
       // show rating form
       setShowRatingForm(app.id);
     } catch (err) {
       console.error("endShift unexpected", err);
-      alert("❌ शिफ्ट समाप्त करने میں समस्या");
+      alert("❌ शिफ्ट समाप्त करने में समस्या");
     }
   };
 
@@ -525,10 +534,8 @@ export default function MyApplicationsPage() {
       // mark rating present for this application
       setRatingsGiven((prev) => ({ ...prev, [app.id]: true }));
 
-      // After rating, check if shift was completed earlier — if yes, mark Job Done
-      const shiftForApp = activeShift[app.id];
-      // Note: activeShift may be null if we cleared after endShift; to be safe, re-check shift_logs status from server
-      const { data: shiftCheck } = await supabase
+      // After rating, check latest shift status from server
+      const { data: shiftCheck, error: shiftCheckErr } = await supabase
         .from("shift_logs")
         .select("status")
         .eq("job_id", app.job_id)
@@ -538,11 +545,18 @@ export default function MyApplicationsPage() {
         .limit(1)
         .single();
 
-      const shiftStatus = (shiftCheck as ShiftStatusRow | null)?.status ?? (shiftForApp ? shiftForApp.status : null);
+      if (shiftCheckErr) {
+        console.error("shiftCheckErr", shiftCheckErr);
+      }
+
+      const shiftStatus = (shiftCheck as ShiftStatusRow | null)?.status ?? (activeShift[app.id] ? activeShift[app.id]!.status : null);
+
       if (shiftStatus === "completed") {
+        // remove this application from worker dashboard (auto-delete behavior)
+        setApplications((prev) => prev.filter((a) => a.id !== app.id));
         setCompletedApps((prev) => ({ ...prev, [app.id]: true }));
       } else {
-        // if shift not completed yet, we still set ratingsGiven; completedApps will be set later when shift completes
+        // update state to reflect rating only
         setCompletedApps((prev) => ({ ...prev, [app.id]: !!prev[app.id] || false }));
       }
     } catch (err) {
@@ -570,7 +584,7 @@ export default function MyApplicationsPage() {
       ) : (
         <div className="space-y-4">
           {applications.map((app) => {
-            const shift = activeShift[app.id];
+            const shift = activeShift[app.id] ?? null; // may be null or latest shift (ongoing|completed)
             const isRatingVisible = showRatingForm === app.id;
             const isCompleted = !!completedApps[app.id]; // Job Done if true
 
@@ -583,7 +597,8 @@ export default function MyApplicationsPage() {
                   <p className="text-lg font-bold">
                     {app.jobs?.title || "—"} ({app.jobs?.location || "—"})
                   </p>
-                  {isCompleted && <div className="text-sm font-semibold text-green-700">✅ Job Done</div>}
+                  {/* If shift exists and completed -> show Job Done text here (but such apps are removed from list on load) */}
+                  {shift && shift.status === "completed" && <div className="text-sm font-semibold text-green-700">✅ Job Done</div>}
                 </div>
 
                 {/* compute display wage: prefer application.offered_wage, then job.wage */}
@@ -632,8 +647,12 @@ export default function MyApplicationsPage() {
                       </div>
                     )}
 
-                    {/* show Start if there is NO ongoing shift for this app */}
-                    {(!shift || shift.status !== "ongoing") ? (
+                    {/* UI decision based on latest shift status:
+                        - if no shift found -> show Start button
+                        - if latest status === 'ongoing' -> show End/emergency
+                        - if latest status === 'completed' -> (this app should have been removed on load), but keep defensive handling
+                    */}
+                    {(!shift || shift.status === null) ? (
                       <>
                         {!isRatingVisible && (
                           <button
@@ -683,7 +702,7 @@ export default function MyApplicationsPage() {
                           </div>
                         )}
                       </>
-                    ) : (
+                    ) : shift.status === "ongoing" ? (
                       <div className="flex gap-2">
                         <button
                           onClick={() => emergencyAlert(app)}
@@ -698,6 +717,9 @@ export default function MyApplicationsPage() {
                           शिफ्ट समाप्त करें 🛑
                         </button>
                       </div>
+                    ) : (
+                      // defensive: if completed (should not reach here because we filtered completed apps), still show Job Done text
+                      <div className="text-sm font-semibold text-green-700">✅ Job Done</div>
                     )}
                   </div>
                 )}

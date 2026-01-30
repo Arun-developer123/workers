@@ -8,10 +8,44 @@ import { FaShoppingCart, FaCar } from "react-icons/fa";
 import Link from "next/link";
 import ThreeDotsMenu from "@/components/ThreeDotsMenu";
 
-// allow TypeScript to accept window.Razorpay usage
+// ===== Razorpay types (no `any`) =====
+interface RazorpayPaymentResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayOrder {
+  id: string;
+  amount: number;
+  currency?: string;
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount?: number;
+  currency?: string;
+  name?: string;
+  description?: string;
+  order_id?: string;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  handler: (response: RazorpayPaymentResponse) => void | Promise<void>;
+  modal?: {
+    ondismiss?: () => void;
+  };
+}
+
+interface RazorpayInstance {
+  open: () => void;
+}
+
 declare global {
   interface Window {
-    Razorpay?: any;
+    Razorpay?: new (options: RazorpayOptions) => RazorpayInstance;
   }
 }
 
@@ -155,7 +189,7 @@ export default function HomePage() {
   function safeParseProfile(raw: string): Profile | null {
     try {
       const obj = JSON.parse(raw);
-      if (!obj || typeof obj !== "object" || !obj.user_id) return null;
+      if (!obj || typeof obj !== "object" || !("user_id" in obj)) return null;
       return obj as Profile;
     } catch (e) {
       return null;
@@ -646,7 +680,7 @@ export default function HomePage() {
   // ---------- Razorpay payment helpers (frontend) ----------
   async function loadRazorpaySdk(): Promise<void> {
     if (typeof window === "undefined") return;
-    if ((window as any).Razorpay) return;
+    if (window.Razorpay) return;
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
       script.src = "https://checkout.razorpay.com/v1/checkout.js";
@@ -666,7 +700,7 @@ export default function HomePage() {
     if (!app || !app.id) return alert("Invalid application");
     try {
       // compute amount from contractor_wage OR resolveWageForApp fallback
-      const contractorWage = parseWage(app.contractor_wage as any) ?? resolveWageForApp(app);
+      const contractorWage = parseWage(app.contractor_wage) ?? resolveWageForApp(app);
       if (contractorWage == null || contractorWage <= 0) {
         return alert("Contractor wage invalid for payment");
       }
@@ -681,8 +715,8 @@ export default function HomePage() {
         body: JSON.stringify({ applicationId: app.id, amount: contractorWage }),
       });
 
-      const createJson = await createResp.json();
-      if (!createResp.ok || !createJson?.order) {
+      const createJson = (await createResp.json()) as { order?: RazorpayOrder; keyId?: string } | null;
+      if (!createResp.ok || !createJson || !createJson.order) {
         console.error("create order failed", createJson);
         alert("Order बनाते समय त्रुटि आई");
         setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
@@ -690,23 +724,28 @@ export default function HomePage() {
       }
 
       const { order } = createJson;
-      const keyId = createJson.keyId;
+      const keyId = createJson.keyId ?? "";
 
       // 2) load SDK
       await loadRazorpaySdk();
 
+      // Ensure Razorpay exists
+      if (!window.Razorpay) {
+        throw new Error("Razorpay SDK not available after load");
+      }
+
       // 3) open checkout
-      const options = {
+      const options: RazorpayOptions = {
         key: keyId,
         amount: order.amount, // paise
-        currency: order.currency || "INR",
+        currency: order.currency ?? "INR",
         name: "Your App Name",
         description: `Payment for application ${app.id}`,
         order_id: order.id,
         prefill: {
-          name: profile?.name || "",
+          name: profile?.name ?? "",
         },
-        handler: async function (response: any) {
+        handler: async function (response: RazorpayPaymentResponse) {
           // response contains: razorpay_payment_id, razorpay_order_id, razorpay_signature
           try {
             const verifyResp = await fetch("/api/razorpay/verify", {
@@ -722,7 +761,7 @@ export default function HomePage() {
             });
 
             const verifyJson = await verifyResp.json();
-            if (!verifyResp.ok || verifyJson?.error) {
+            if (!verifyResp.ok || (verifyJson && typeof verifyJson === "object" && "error" in (verifyJson as any))) {
               console.error("verify failed", verifyJson);
               alert("Payment verify में समस्या — console देखें");
               setOpUpdatingApp((p) => ({ ...p, [app.id]: false }));
@@ -747,7 +786,7 @@ export default function HomePage() {
         },
       };
 
-      const rzp = new (window as any).Razorpay(options);
+      const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (err) {
       console.error("startPaymentForApplication error", err);
